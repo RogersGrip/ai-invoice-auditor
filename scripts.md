@@ -1,5 +1,5 @@
 # Scripts
-
+- `export PYTHONPYCACHEPREFIX="$PWD/pycache"`
 - `export PYTHONPYCACHEPREFIX="$(dirname "$(pwd)")/pycache"`
 
 - `uv venv`
