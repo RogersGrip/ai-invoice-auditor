@@ -44,6 +44,7 @@ EMBEDDING_MODEL=amazon.titan-embed-text-v1
 - For vectors use qdrant and standard folder no docker for now.
 
 Sscripts
+- 3.12 python
 
 - `export PYTHONPYCACHEPREFIX="$(dirname "$(pwd)")/pycache"`
 
@@ -59,6 +60,10 @@ Sscripts
 - Decide which agents need google adk and which need langgraph and perfectly integrate them with a2a protocol and mcp standards.
 - If something can be done without llm , try doing that so that llm provides proper structured outputs.
 - Make it easy to swap out llms in the future (just a consideration maybe use ollama dont add them now, just make it so that they can be added)
+- The guard rails should be proper as well. Keep everythign consistent.
+- Now present them one by one. SO that i can make changes and you can approve.
+- Ensure to do this in this entire chat.
+- Don't use code canvas features, Instead properly spit out the code.
 
 # toml for uv
 [project]
