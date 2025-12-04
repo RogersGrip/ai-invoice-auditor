@@ -497,3 +497,7 @@ logging:
   enable_audit_log: true
   log_file: "./logs/invoice_auditor.log"
   log_level: "INFO"
+
+
+I have attached one sample invoice for example. Note : NOt all invoices look the same way they maybe pdf, diffreent language, png or docx , txt or whatever
+Invoice can have any formats
