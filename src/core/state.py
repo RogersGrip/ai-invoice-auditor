@@ -37,6 +37,7 @@ class ValidationResult(BaseModel):
 class InvoiceState(TypedDict):
     file_path: str
     file_name: str
+    metadata: dict[str, Any]
     raw_text: str | None
     extracted_data: dict[str, Any]
     standardized_invoice: dict[str, Any] | None
