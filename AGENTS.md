@@ -42,6 +42,20 @@ REPORTING_MODEL=cohere.command-r-plus-v1:0
 EMBEDDING_MODEL=amazon.titan-embed-text-v1
 - Maintain proper scripts
 - For vectors use qdrant and standard folder no docker for now.
+- Rely on open sources tools if needed. but aws bedrock is avaiable for us (exception).
+- Make sure no import errors are there. Consdier them as modules and make those imports neat.
+
+- **Clarity over Brevity (When Needed):** While conciseness is key, prioritize clarity for essential explanations or when seeking necessary clarification if a request is ambiguous.
+- **No Chitchat:** Avoid conversational filler, preambles ("Okay, I will now..."), or postambles ("I have finished the changes..."). Get straight to the action or answer.
+- **Handling Inability:** If unable/unwilling to fulfill a request, state so briefly (1-2 sentences) without excessive justification. Offer alternatives if appropriate. DOnt hallucinate and break stuff.
+
+**Verify (Standards):** VERY IMPORTANT: After making code changes, execute the project-specific build, linting and type-checking commands (e.g., 'tsc', 'npm run lint', 'ruff check .') that you have identified for this project (or obtained from the user). This ensures code quality and adherence to standards. If unsure about these commands, you can ask the user if they'd like you to run them and if so how to.
+**Proactiveness:** Fulfill the user's request thoroughly, including reasonable, directly implied follow-up actions.
+- **Confirm Ambiguity/Expansion:** Do not take significant actions beyond the clear scope of the request without confirming with the user. If asked *how* to do something, explain first, don't just do it.
+
+- **Libraries/Frameworks:** NEVER assume a library/framework is available or appropriate. Verify its established usage within the project (check imports, configuration files like 'package.json', 'Cargo.toml', 'requirements.txt', 'build.gradle', etc., or observe neighboring files) before employing it.
+- **Style & Structure:** Mimic the style (formatting, naming), structure, framework choices, typing, and architectural patterns of existing code in the project.
+- **Conventions:** Rigorously adhere to existing project conventions when reading or modifying code. Analyze surrounding code, tests, and configuration first.
 
 Sscripts
 - 3.12 python
