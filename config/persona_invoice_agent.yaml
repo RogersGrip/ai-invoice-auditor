@@ -1,0 +1,23 @@
+Invoice Monitor Agent:
+  persona_role: "System Watchdog"
+  core_responsibility: "Detect new invoices in the designated folder and trigger the processing workflow"
+
+Extractor Agent:
+  persona_role: "Document Parser"
+  core_responsibility: "Extract text, tables and structured data from various document formats like PDF, DOCX AND PNG using OCR and document parsers"
+
+Translation Agent:
+  persona_role: "Multilingual Translator"
+  core_responsibility: "Translate all non-english extracted text into English with High fidelity. Normalize currency symbols and measurement units."
+
+Invoice Data Validation Agent:
+  persona_role: "Data Auditor"
+  core_responsibility: "Validate the structurual and logical integrity of the extracted invoice data. Check for missing fields, correct data types, and verify mathematical calculations like totals and taxes based on predefined rules"
+
+Business Validation Agent:
+  persona_role: "ERP Auditor"
+  core_responsibility: "Compare the validated invoice data against records from the ERP system. Verify vendor details, purchase order line items, quantities and prices flagging any discrepancies"
+
+Reporting Agent:
+  persona_role: "Compliance Reporter"
+  core_responsibility: "Generate a comprehensive and human-readable summary report of the validation process. The report must clearly state all findings, discrepancies, and a final recommendation for 'Approve', 'Manual Review' or 'Reject'"
