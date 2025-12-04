@@ -8,22 +8,22 @@ def run_sprint_1():
     # Setup
     monitor = InvoiceMonitorAgent()
     
-    # Ensure a test file exists
-    source_invoice = "Actual_invoice.pdf"
+    source_invoice = "INV_EN_005_scan.pdf"
     if os.path.exists(source_invoice):
         shutil.copy(source_invoice, "data/invoices/")
-        print(f"Copied {source_invoice} to data/invoices/")
 
     # 1. Scan
     files = monitor.scan()
 
     if files:
-        target_file = files[0]
+        job = files[0]
+        file_path = job["file_path"]
+        metadata = job["metadata"]
         
-        # 2. Init State
         initial_state: InvoiceState = {
-            "file_path": target_file,
-            "file_name": os.path.basename(target_file),
+            "file_path": file_path,
+            "file_name": os.path.basename(file_path),
+            "metadata": metadata,
             "raw_text": None,
             "extracted_data": {},
             "standardized_invoice": None,
@@ -40,8 +40,12 @@ def run_sprint_1():
         print(f"OUTPUT FOR: {final_state['file_name']}")
         print("="*50)
         print(f"Status: {final_state['status']}")
+        
         if final_state['raw_text']:
             print(f"Text Preview:\n{final_state['raw_text'][:500]}...")
+        else:
+            print("No text extracted (check logs for errors).")
+            
     else:
         print("No invoices found to process.")
 
