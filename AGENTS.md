@@ -501,3 +501,8 @@ logging:
 
 I have attached one sample invoice for example. Note : NOt all invoices look the same way they maybe pdf, diffreent language, png or docx , txt or whatever
 Invoice can have any formats
+
+
+Now go ahead act as a sprint master and give entire plan and ask me to do tasks one by one
+get my input, fix for discrepancies and approve it before proceeding to the next spring
+present them one by one step by step

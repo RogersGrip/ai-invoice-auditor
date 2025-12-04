@@ -1,107 +1,172 @@
-# Capstone Project: AI Invoice Auditor - End-to-End Implementation Plan
+This is a comprehensive, state-of-the-art architectural plan for the **AI Invoice Auditor**. I have designed this to be modular, production-grade, and strictly aligned with your constraints (Python 3.12, `uv`, Bedrock/Cohere, No Docker, SOLID principles).
 
-This is a comprehensive blueprint for building the **AI Invoice Auditor**. I have designed this to meet your strict constraints: **clean code, production standards (SOLID, clean architecture), hybrid agentic frameworks (LangGraph + Google ADK), and strict interoperability protocols (MCP + A2A).**
+As your Sprint Master, I will layout the architecture first. Once you approve this high-level direction, we will move to **Sprint 0**.
+
+-----
 
 ## 1\. High-Level Design (HLD)
 
-The system follows a **Micro-Agent Architecture**. We will treat the LangGraph agents as the "Orchestrators" (Client side of A2A) and the Google ADK agents as "Specialized Workers" (Server side of A2A). This perfectly demonstrates the interoperability requirement.
+We will use a **Hub-and-Spoke Agentic Architecture**.
 
-### **Core Components**
+  * **Orchestrator (LangGraph):** Manages the state and flow between agents.
+  * **Specialized Agents:** Focused on single responsibilities (Extraction, Translation, Validation).
+  * **Interoperability (A2A & MCP):** The Core System (LangGraph) communicates with the External System (e.g., a standalone Reporting Agent built with Google ADK patterns) via a standardized HTTP/JSON schema (A2A). Tools are exposed via MCP.
 
-1.  **Orchestrator Core (LangGraph):**
-      * **Responsibilities:** State management, Decision making, RAG loops, Human-in-the-loop (HITL).
-      * **Agents:** Invoice Monitor, Extractor, RAG Triad (Indexing, Retrieval, Generation).
-2.  **Specialized Service Mesh (Google ADK):**
-      * **Responsibilities:** Deterministic tasks, high-reliability standardized processing.
-      * **Agents:** Translation Agent, Validation Agent, Reporting Agent.
-      * **Protocol:** Exposed via **Agent-to-Agent (A2A)** Protocol.
-3.  **Tool Layer (Model Context Protocol - MCP):**
-      * **Responsibilities:** Standardized access to external systems.
-      * **Servers:**
-          * `filesystem-mcp`: For reading invoices.
-          * `erp-mock-mcp`: For querying the mock Enterprise database.
-          * `vector-mcp`: For Qdrant interactions.
-4.  **Interface Layer:**
-      * **Backend:** FastAPI (Serving the LangGraph workflow and ADK endpoints).
-      * **Frontend:** Streamlit (Admin Dashboard, HITL Interface).
-      * **Gateway:** LiteLLM (Unified interface for AWS Bedrock Cohere/Titan).
+### Architecture Diagram
+
+```mermaid
+graph TD
+    subgraph "Input Layer"
+        Email[Email/Folder Monitor] -->|Triggers| Orch[Orchestrator (LangGraph)]
+    end
+
+    subgraph "Orchestration Layer (LangGraph)"
+        Orch --> MonitorAg[Invoice Monitor Agent]
+        Orch --> ExtractAg[Extractor Agent]
+        Orch --> TransAg[Translation Agent]
+        Orch --> ValidAg[Data Validation Agent]
+        Orch --> RAGAg[RAG Specialist Agent]
+    end
+
+    subgraph "External/Specialized Agents (Simulating Google ADK/Interop)"
+        Orch <-->|A2A Protocol (HTTP)| BizAg[Business Validation Agent]
+    end
+
+    subgraph "Tooling Layer (MCP)"
+        ExtractAg <-->|MCP| OCR[OCR Tool (Tesseract)]
+        ExtractAg <-->|MCP| PDF[PDF Parser]
+        BizAg <-->|MCP| ERP[Mock ERP API]
+        RAGAg <-->|MCP| VecDB[Qdrant (Local)]
+    end
+
+    subgraph "Observability & Gateway"
+        LiteLLM[LiteLLM Gateway]
+        LangFuse[LangFuse Observability]
+        Orch -.-> LiteLLM
+        Orch -.-> LangFuse
+    end
+
+    subgraph "User Interface"
+        Streamlit[Streamlit UI] <--> Orch
+    end
+```
 
 -----
 
-## 2\. Low-Level Design (LLD) & Tech Stack Decisions
+## 2\. Low-Level Design (LLD)
 
-### **Directory Structure (Monorepo)**
+### Tech Stack & Decisions
+
+  * **Language:** Python 3.12 (Strict typing).
+  * **Dependency Manager:** `uv` (Fast, efficient).
+  * **LLM Gateway:** `LiteLLM` pointing to AWS Bedrock (`cohere.command-r-plus-v1:0`).
+  * **Orchestration:** `LangGraph` (Stateful workflows).
+  * **Interop:** `FastAPI` to expose agents that require A2A protocol.
+  * **Vector DB:** `Qdrant` (Local mode, no Docker required).
+  * **Observability:** `LangFuse` (Self-hosted or Cloud, we will configure SDK).
+  * **Config:** `Pydantic Settings` + `.env`.
+
+### Directory Structure
+
+We will adhere to a clean "src-layout".
 
 ```text
 ai-invoice-auditor/
-├── agents/
-│   ├── adk_workers/        # Google ADK Agents (Translation, Validation)
-│   │   ├── src/
-│   │   ├── agent_cards/    # A2A JSON Cards
-│   │   └── main.py         # Runs the ADK A2A Server
-│   └── langgraph_core/     # LangGraph Orchestrator
-│       ├── graph.py
-│       └── nodes/
-├── tools/                  # MCP Servers
-│   ├── erp_server.py       # FastMCP server for Mock ERP
-│   └── file_server.py      # FastMCP server for File Ops
-├── shared/
-│   ├── protocols/          # A2A Client wrappers
-│   └── utils/              # Logger, Env Config, LiteLLM setup
-├── backend/                # FastAPI Application
-├── frontend/               # Streamlit Dashboard
-├── scripts/                # Startup bash/bat scripts
-├── pyproject.toml          # uv config
-└── .env.example
+├── .venv/                   # Managed by uv
+├── config/                  # Configuration & YAML personas
+├── data/                    # Mock data (ERP), raw invoices, processed
+├── logs/                    # Structured logs
+├── src/
+│   ├── agents/              # Agent logic (Classes)
+│   │   ├── monitor.py
+│   │   ├── extractor.py
+│   │   ├── translator.py
+│   │   └── validator.py
+│   ├── core/                # Core infrastructure
+│   │   ├── llm.py           # LiteLLM wrapper
+│   │   ├── state.py         # LangGraph state definitions
+│   │   └── logger.py        # Loguru setup
+│   ├── database/            # Qdrant & Vector logic
+│   ├── models/              # Pydantic data models (Schemas)
+│   ├── tools/               # MCP Tool implementations
+│   │   ├── erp_mock.py
+│   │   └── ocr_engine.py
+│   ├── workflows/           # LangGraph workflows
+│   └── main.py              # Entry point
+├── tests/
+├── .env.example
+├── pyproject.toml
+└── README.md
 ```
 
-### **Critical Technical Decisions**
+-----
 
-1.  **Google ADK with Bedrock:** Google ADK defaults to Gemini. We will implement a `Model` Adapter using `LiteLLM` to force it to use your AWS Bedrock (`cohere.command-r-plus-v1:0`) credentials.
-2.  **A2A Implementation:** We will run the ADK agents as a local HTTP service acting as an "A2A Remote Node". The LangGraph nodes will use an `A2AClient` to dispatch tasks to them.
-3.  **Vector DB:** Qdrant (Embedded mode or Local server) to avoid Docker complexity as requested.
-4.  **Observability:** LangFuse Python SDK will be initialized at the entry point of both LangGraph and ADK processes.
+## 3\. The Master Sprint Plan
+
+We will execute this in **6 Logical Sprints**.
+
+### **Sprint 0: Foundations & Configuration**
+
+  * Initialize project with `uv`.
+  * Set up Environment Variables & Logging.
+  * Implement `Mock ERP` data loader.
+  * Define `Agent Personas` (YAML).
+  * **Goal:** A running environment where we can load config and access the Mock ERP.
+
+### **Sprint 1: Ingestion & Extraction (The Eyes)**
+
+  * Implement `Invoice Monitor Agent` (Watchdog).
+  * Implement `Extractor Agent` with OCR (Tesseract/PDF tools).
+  * Create Pydantic models for `Invoice` structure.
+  * **Goal:** Drop a PDF in a folder -\> Get raw JSON text out.
+
+### **Sprint 2: Translation & Standardization (The Brain - Part 1)**
+
+  * Implement `Translation Agent` using Cohere.
+  * Implement `Lang-Bridge Tool`.
+  * Standardize all outputs to English and specific JSON Schema.
+  * **Goal:** Raw Multilingual JSON -\> Clean English JSON.
+
+### **Sprint 3: Validation & A2A Protocol (The Brain - Part 2)**
+
+  * Implement `Data Validation Agent` (Rules engine).
+  * **Complex Step:** Implement `Business Validation Agent` as a separate micro-service (FastAPI) to demonstrate **A2A Protocol** (simulating Google ADK separation).
+  * Integrate Mock ERP checks.
+  * **Goal:** Clean JSON -\> Validated Report with Discrepancies.
+
+### **Sprint 4: RAG & Knowledge Base (The Memory)**
+
+  * Setup `Qdrant` (Local).
+  * Implement `Indexing Agent` & `Retrieval Agent`.
+  * Implement RAG logic (Embeddings -\> Search -\> Rerank -\> Generate).
+  * **Goal:** Chat with the invoice ("What is the total for SKU-001?").
+
+### **Sprint 5: Orchestration & UI (The Body)**
+
+  * Stitch agents together using `LangGraph`.
+  * Build `Streamlit` Dashboard.
+  * Implement `Reflection Agent` for final report quality.
+  * **Goal:** End-to-End flow visible in UI.
+
+### **Sprint 6: Observability, Guardrails & Polish**
+
+  * Integrate `LangFuse` for tracing.
+  * Finalize `RAI Guardrails` (Input/Output filtering).
+  * Write startup scripts (`run.sh`, `run.bat`).
+  * **Goal:** Production-ready demo.
 
 -----
 
-## 3\. Sprint Plan
+## 4\. Immediate Action: Sprint 0 Authorization
 
-We will execute this in **5 Organized Sprints**.
+I am ready to start **Sprint 0**.
 
-### **Sprint 1: Foundation & The Tool Layer (MCP)**
+**Sprint 0 Tasks:**
 
-  * **Goal:** Setup `uv` environment, standard logging, and the MCP Servers (ERP & File System).
-  * **Deliverable:** Working `erp_server` and `file_server` that can be queried via MCP Inspector.
-  * **Tech:** Python 3.12, `mcp`, `fastmcp`.
+1.  Initialize `uv` project.
+2.  Create directory structure.
+3.  Create `.env` and `config.yaml`.
+4.  Create `mock_data` JSON files (from your prompt).
+5.  Create `logger` configuration.
 
-### **Sprint 2: The Specialized Workers (Google ADK + A2A)**
-
-  * **Goal:** Build Translation and Validation agents using Google ADK. Wrap them in the A2A Protocol.
-  * **Deliverable:** A running background service where I can send a JSON task "Translate this" and get a response, utilizing `cohere` via Bedrock.
-  * **Tech:** `google-adk`, `a2a-sdk`, `litellm`.
-
-### **Sprint 3: The Orchestrator (LangGraph & RAG)**
-
-  * **Goal:** Build the RAG system (Qdrant) and the main Workflow State Machine.
-  * **Deliverable:** A LangGraph workflow that detects a file, extracts text (using simple OCR/Text library), calls the ADK agents (from Sprint 2), and indexes data.
-  * **Tech:** `langgraph`, `langchain-aws`, `qdrant-client`.
-
-### **Sprint 4: Integration & Interface**
-
-  * **Goal:** Connect Backend (FastAPI) and Frontend (Streamlit).
-  * **Deliverable:** A UI where I can upload an invoice (or drop it in a folder), see the live agent steps, and view the final report.
-  * **Tech:** FastAPI, Streamlit.
-
-### **Sprint 5: Hardening & Observability**
-
-  * **Goal:** Add Guardrails, Human-in-the-loop (HITL) breakpoints in LangGraph, and full LangFuse tracing.
-  * **Deliverable:** Production-ready code, final demo scripts.
-
------
-
-## 4\. Immediate Next Step: Environment & Foundation
-
-I will now start **Sprint 1**. This involves setting up the strict project structure and the `pyproject.toml` with `uv`.
-
-**Does this Design and Sprint Plan meet your expectations?**
-*If yes, I will proceed to generate the Setup Script and Sprint 1 Code.*
+**Do you approve the Architecture and the Sprint Plan? If yes, type "Start Sprint 0".**
