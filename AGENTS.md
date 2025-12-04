@@ -43,7 +43,11 @@ EMBEDDING_MODEL=amazon.titan-embed-text-v1
 - Maintain proper scripts
 - For vectors use qdrant and standard folder no docker for now.
 - Rely on open sources tools if needed. but aws bedrock is avaiable for us (exception).
-- Make sure no import errors are there. Consdier them as modules and make those imports neat.
+- Make sure no import errors are there. Consider them as modules and make those imports neat.
+- Also use a separate data manager for any loading activities so its neat and clean.
+
+- Agent personas should describe the tasks clearly.
+
 
 - **Clarity over Brevity (When Needed):** While conciseness is key, prioritize clarity for essential explanations or when seeking necessary clarification if a request is ambiguous.
 - **No Chitchat:** Avoid conversational filler, preambles ("Okay, I will now..."), or postambles ("I have finished the changes..."). Get straight to the action or answer.
@@ -287,3 +291,209 @@ Masked Invoice.pdf
 • Sample Data (multilingual invoices, mock enterprise records) 
 • Validation Reports (PDF/HTML/CSV) 
 • Documentation (setup, usage, agent design, prompt templates) 
+
+
+
+- The mock erp backend should check against 
+    - mock records :
+        1. po_records.json
+        [
+    {
+        "po_number": "PO-1001",
+        "vendor_id": "VEND-001",
+        "line_items": [
+            {
+                "item_code": "SKU-001",
+                "description": "Pallet Wrapping Film",
+                "qty": 50,
+                "unit_price": 12.00,
+                "currency": "USD"
+            },
+            {
+                "item_code": "SKU-002",
+                "description": "Industrial Gloves",
+                "qty": 120,
+                "unit_price": 3.00,
+                "currency": "USD"
+            },
+            {
+                "item_code": "SKU-003",
+                "description": "Safety Helmets",
+                "qty": 30,
+                "unit_price": 15.00,
+                "currency": "USD"
+            }
+        ]
+    },
+    {
+        "po_number": "PO-1002",
+        "vendor_id": "VEND-002",
+        "line_items": [
+            {
+                "item_code": "SKU-101",
+                "description": "Container Seals",
+                "qty": 200,
+                "unit_price": 1.25,
+                "currency": "USD"
+            }
+        ]
+    },
+
+    2. sku_master.json
+    [
+    {
+        "item_code": "SKU-001",
+        "category": "Packaging",
+        "uom": "roll",
+        "gst_rate": 10
+    },
+    {
+        "item_code": "SKU-002",
+        "category": "Safety",
+        "uom": "pair",
+        "gst_rate": 10
+    },
+    {
+        "item_code": "SKU-003",
+        "category": "Safety",
+        "uom": "piece",
+        "gst_rate": 10
+    },
+    
+    3. vendors.json
+    [
+    {
+        "vendor_id": "VEND-001",
+        "vendor_name": "Global Logistics Ltd",
+        "country": "UK",
+        "currency": "USD"
+    },
+    {
+        "vendor_id": "VEND-002",
+        "vendor_name": "BlueOcean Transport Co.",
+        "country": "USA",
+        "currency": "USD"
+    },
+    {
+        "vendor_id": "VEND-003",
+        "vendor_name": "Transporte Ibérico S.A.",
+        "country": "Spain",
+        "currency": "EUR"
+    },
+
+The files uploaded also will have meta data file accordinly
+
+eg : invoice.pdf -> invoice.meta.json
+
+{
+  "sender": "rechnung@hafenlogistik.de",
+  "subject": "Rechnung RE-2025-004 - Bestellung PO-1004",
+  "received_timestamp": "2025-05-02T11:00:00Z",
+  "language": "de",
+  "attachments": ["INV_DE_004.docx"]
+}
+
+
+Consider these as well if theyre needed.
+
+eg of persona
+
+Invoice Monitor Agent:
+  persona_role: "System Watchdog"
+  core_responsibility: "Detect new invoices in the designated folder and trigger the processing workflow"
+
+make it proper and more descriptive
+
+also for rules use something like this
+
+# =============================================================
+# AI Invoice Auditor – Validation Rules Configuration
+# =============================================================
+# This file defines the business and data validation rules
+# applied by the Invoice Data Validation Agent and Business Validation Agent.
+# =============================================================
+
+# -------------------------------------------------------------
+# 1. General Invoice Requirements
+# -------------------------------------------------------------
+required_fields:
+  header:
+    - invoice_no
+    - invoice_date
+    - vendor_id
+    - currency
+    - total_amount
+  line_item:
+    - item_code
+    - description
+    - qty
+    - unit_price
+    - total
+
+# -------------------------------------------------------------
+# 2. Field Data Type Rules
+# -------------------------------------------------------------
+data_types:
+  invoice_no: str
+  invoice_date: date
+  vendor_id: str
+  currency: str
+  total_amount: float
+  qty: float
+  unit_price: float
+  total: float
+
+# -------------------------------------------------------------
+# 3. Business Validation Thresholds
+# -------------------------------------------------------------
+tolerances:
+  # Maximum allowed deviation when comparing invoice vs ERP
+  price_difference_percent: 5       # ±5% tolerance in unit price
+  quantity_difference_percent: 0    # Quantity must match exactly
+  tax_difference_percent: 2         # ±2% tolerance for tax amounts
+
+# -------------------------------------------------------------
+# 4. Currency Validation Rules
+# -------------------------------------------------------------
+accepted_currencies:
+  - USD
+  - EUR
+  - INR
+  - GBP
+
+# Define fallback mapping for currency symbols → ISO codes
+currency_symbol_map:
+  "$": "USD"
+  "€": "EUR"
+  "₹": "INR"
+  "£": "GBP"
+
+# -------------------------------------------------------------
+# 5. Validation Policies
+# -------------------------------------------------------------
+validation_policies:
+  # Missing mandatory field handling
+  missing_field_action: "flag"
+  # If totals mismatch beyond tolerance
+  total_mismatch_action: "manual_review"
+  # For currency not in accepted list
+  invalid_currency_action: "reject"
+  # Auto-approval threshold (if no discrepancy & translation confidence ≥ 0.95)
+  auto_approve_confidence_threshold: 0.95
+
+# -------------------------------------------------------------
+# 6. Reporting Parameters
+# -------------------------------------------------------------
+reporting:
+  include_translation_confidence: true
+  include_discrepancy_summary: true
+  report_format: "PDF"
+  output_dir: "./outputs/reports"
+
+# -------------------------------------------------------------
+# 7. Logging and Audit Settings
+# -------------------------------------------------------------
+logging:
+  enable_audit_log: true
+  log_file: "./logs/invoice_auditor.log"
+  log_level: "INFO"
