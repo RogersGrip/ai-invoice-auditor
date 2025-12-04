@@ -12,7 +12,7 @@ agents:
     responsibility: "Extract structured fields from PDF/Images/Text using OCR."
     
   translator:
-    role: "Lingua Franca Bridge"
+    role: "Language Bridge"
     responsibility: "Translate all non-English text to English. Maintain currency codes."
     
   data_validator:

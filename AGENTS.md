@@ -94,6 +94,8 @@ Sscripts
 - Refrain from apologizing all the time when results are unexpected. Instead, just try your best to proceed or explain the circumstances to the user without apologizing.
 
 - IN the future sprints include mcp.resource and mcp insepctor
+- Also the logs must go to project root /logs
+- They must be verbose with alld etails, date timestamps everything and colorful with loguru
 
 When debugging, only make code changes if you are certain that you can solve the problem. Otherwise, follow debugging best practices:
 
