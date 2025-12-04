@@ -64,6 +64,8 @@ Sscripts
 - Now present them one by one. SO that i can make changes and you can approve.
 - Ensure to do this in this entire chat.
 - Don't use code canvas features, Instead properly spit out the code.
+- I am using vscode for editing.
+- .venv is the venv name
 
 # toml for uv
 [project]
