@@ -160,7 +160,7 @@ similarity search
 ➢ Augmentation Agent – Performs reranking of chunks based on similarity score.
 ➢ Generation Agent – Uses LLM to generate contextual responses 
 ➢ Reflection Agent – Evaluates response based on RAG Triad parameters including 
-Answer Relevance, Context Relevance, and Groundedness. Include all RAGAS metrics.
+Answer Relevance, Context Relevance, and Groundedness. Include all RAGAS metrics. All of them.
 
 8. As part of the RAG Implementation the following tools need to be leverages 
 ➢ Vector-Indexer Tool – Converts documents into embeddings and stores 
