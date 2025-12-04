@@ -1,0 +1,38 @@
+system:
+  app_name: "AI Invoice Auditor"
+  version: "1.0.0"
+
+agents:
+  invoice_monitor:
+    role: "System Watchdog"
+    responsibility: "Detect new invoices in 'data/invoices' and trigger workflow."
+    
+  extractor:
+    role: "Data Harvester"
+    responsibility: "Extract structured fields from PDF/Images/Text using OCR."
+    
+  translator:
+    role: "Lingua Franca Bridge"
+    responsibility: "Translate all non-English text to English. Maintain currency codes."
+    
+  data_validator:
+    role: "Rule Enforcer"
+    responsibility: "Check for missing fields and data type correctness."
+    
+  business_validator:
+    role: "Enterprise Auditor"
+    responsibility: "Cross-reference line items against ERP PO records."
+
+validation_rules:
+  required_fields:
+    - "invoice_no"
+    - "invoice_date"
+    - "vendor_id"
+    - "total_amount"
+    - "currency"
+  
+  tolerances:
+    price_difference_percent: 5.0
+    tax_difference_percent: 2.0
+    
+  accepted_currencies: ["USD", "EUR", "INR", "GBP"]
