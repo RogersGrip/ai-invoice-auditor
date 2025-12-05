@@ -11,6 +11,13 @@ class InvoiceMonitorAgent:
         self._processed = set()
 
     def scan(self) -> list[dict]:
+        '''Scan the watch directory for new invoice files
+
+        Args: None
+
+        Returns:
+            list[dict]: List of new invoice jobs with file paths and metadata
+        '''
         new_jobs = []
         
         for file_path in self.watch_dir.glob("*.*"):

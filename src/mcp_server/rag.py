@@ -23,7 +23,9 @@ def logic_ingest_invoice(text: str, filename: str) -> str:
                 text=chunk.page_content, 
                 metadata={"filename": filename, "chunk_index": i}
             )
+
         return f"Successfully indexed {len(chunks)} chunks from {filename}."
+        
     except Exception as e:
         logger.error(f"Ingestion failed: {e}")
         return f"Error: {str(e)}"
@@ -42,6 +44,7 @@ def retrieve_context(query: str) -> str:
     """Retrieves relevant invoice snippets based on a semantic query."""
     results = logic_retrieve_context(query)
     context_str = "\n---\n".join([f"[Source: {r['metadata']['filename']}] {r['text']}" for r in results])
+    
     return context_str
 
 if __name__ == "__main__":

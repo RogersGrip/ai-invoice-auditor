@@ -3,18 +3,31 @@ from loguru import logger
 from pathlib import Path
 
 def find_project_root(start: Path) -> Path:
+    """Find the project root directory by locating the .git folder.
+    
+    Args:
+        start (Path): The starting path to search from.
+
+    Returns:
+        Path: The project root directory or the parent directory if not found.
+    """
     current = start.resolve()
+
     for parent in [current, *current.parents]:
         if (parent / ".git").exists():
             return parent
+    
     return current.parent.parent.parent
 
+# Setup logging
 PROJECT_ROOT = find_project_root(Path(__file__).resolve())
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+# Clear existing loggers
 logger.remove()
 
+# Add console logger
 logger.add(
     sys.stderr,
     format=(

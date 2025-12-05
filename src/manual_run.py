@@ -8,7 +8,7 @@ def run_sprint_1():
     # Setup
     monitor = InvoiceMonitorAgent()
     
-    source_invoice = "INV_EN_005_scan.pdf"
+    source_invoice = "INV_EN_001.pdf"
     if os.path.exists(source_invoice):
         shutil.copy(source_invoice, "data/invoices/")
 
@@ -16,7 +16,7 @@ def run_sprint_1():
     files = monitor.scan()
 
     if files:
-        job = files[0]
+        job = files[1]
         file_path = job["file_path"]
         metadata = job["metadata"]
         

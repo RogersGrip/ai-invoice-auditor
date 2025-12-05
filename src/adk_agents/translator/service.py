@@ -14,9 +14,19 @@ class TranslatorService:
             mode=instructor.Mode.MD_JSON
         )
 
+    # Detect language, translate text, and extract structured data
     def process(self, request: TranslationRequest) -> TranslationResponse:
+        """Process translation request with structured data extraction.
+        
+        Args:
+            TranslationRequest: The translation request containing raw text and metadata.
+
+        Returns:
+            TranslationResponse: The structured translation response.
+        """
         logger.info(f"Processing structured translation. Model: {self.model}")
         
+        # Prepare system prompt with context
         sender = request.metadata.get("sender", "Unknown")
         subject = request.metadata.get("subject", "Invoice")
         
@@ -42,6 +52,7 @@ class TranslatorService:
             
         except Exception as e:
             logger.error(f"Structured Generation Failed: {e}")
+            
             return TranslationResponse(
                 translated_text="ERROR",
                 detected_language="unknown",

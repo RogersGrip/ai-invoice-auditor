@@ -19,6 +19,7 @@ class VectorDB:
     def _init_collection(self):
         if not self.client.collection_exists(self.collection_name):
             logger.info(f"Creating Qdrant collection: {self.collection_name}")
+
             self.client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=VectorParams(size=1536, distance=Distance.COSINE)
@@ -29,6 +30,7 @@ class VectorDB:
             model=self.embedding_model,
             input=[text]
         )
+        
         return response["data"][0]["embedding"]
 
     def add_document(self, text: str, metadata: Dict[str, Any]):

@@ -17,9 +17,15 @@ service = TranslatorService()
 # Endpoint Definitions
 @app.post("/translate", response_model=TranslationResponse)
 async def translate_endpoint(request: TranslationRequest):
-    """Translate an invoice to a specified language"""
+    """Translate an invoice to a specified language
+    
+    Args:
+        request (TranslationRequest): The translation request containing raw text and metadata.
+    Returns:
+        TranslationResponse: The structured translation response."""
     try:
         return service.process(request)
+    
     except Exception as e:
         logger.exception("Translation Agent Failed")
         raise HTTPException(status_code=500, detail=str(e))
