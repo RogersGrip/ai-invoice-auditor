@@ -16,7 +16,7 @@ class OCREngine:
             elif path.suffix.lower() in [".txt", ".json", ".md"]:
                 return path.read_text(encoding="utf-8")
             else:
-                return f"[ERROR] Unsupported file format: {path.suffix}"
+                return f"[ERROR] Unsupported file format for text extraction: {path.suffix}"
         except Exception as e:
             logger.error(f"Extraction failed: {e}")
             raise
@@ -27,8 +27,9 @@ class OCREngine:
             for page_num, page in enumerate(doc):
                 text = page.get_text()
                 if text.strip():
-                    text_content.append(f" PAGE {page_num + 1} \n{text}")
+                    text_content.append(f"--- PAGE {page_num + 1} ---\n{text}")
                 else:
-                    text_content.append(f" PAGE {page_num + 1} [IMAGE CONTENT DETECTED] ")
+                    logger.warning(f"Page {page_num + 1} contains no extractable text (Image-only).")
+                    text_content.append(f"--- PAGE {page_num + 1} [NO TEXT LAYER] ---")
         
         return "\n".join(text_content)
