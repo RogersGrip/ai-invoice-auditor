@@ -1,6 +1,7 @@
 # Centralized project pycache
 pycache/
 logs/
+qdrant_storage/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
