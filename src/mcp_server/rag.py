@@ -1,83 +1,50 @@
 from fastmcp import FastMCP
-from typing import List, Dict, Any
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from src.database.qdrant_db import vector_store
-from litellm import completion
-import os
+from typing import Dict, Any
+from src.rag_engine.agents import rag_system
 from loguru import logger
 
-mcp = FastMCP("RAG Knowledge Agent")
-
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1000,
-    chunk_overlap=200,
-    separators=["\n\n", "\n", " ", ""]
-)
-
-def logic_ingest_invoice(text: str, filename: str, metadata: Dict[str, Any]) -> str:
-    try:
-        chunks = text_splitter.create_documents([text])
-        for i, chunk in enumerate(chunks):
-            # Enriched Metadata
-            meta = {
-                "filename": filename,
-                "chunk_index": i,
-                "sender": metadata.get("sender"),
-                "subject": metadata.get("subject"),
-                "language": metadata.get("language")
-            }
-            vector_store.add_document(
-                text=chunk.page_content,
-                metadata=meta
-            )
-        return f"Successfully indexed {len(chunks)} chunks from {filename}."
-    except Exception as e:
-        logger.error(f"Ingestion failed: {e}")
-        return f"Error: {str(e)}"
-
-def logic_retrieve_context(query: str) -> List[Dict[str, Any]]:
-    logger.info(f"RAG Retrieval for: {query}")
-    return vector_store.search(query, limit=3)
-
-def logic_generate_answer(query: str) -> str:
-    context_items = logic_retrieve_context(query)
-    context_str = "\n---\n".join([
-        f"[Source: {r['metadata'].get('filename')}] {r['text']}" 
-        for r in context_items
-    ])
-    
-    prompt = f"""
-    You are a helpful Invoice Assistant. Answer the question based ONLY on the context below.
-    
-    CONTEXT:
-    {context_str}
-    
-    QUESTION: {query}
-    
-    ANSWER:
-    """
-    
-    try:
-        response = completion(
-            model=os.getenv("REPORTING_MODEL", "bedrock/cohere.command-r-plus-v1:0"),
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"Generation Error: {e}"
+mcp = FastMCP("Advanced RAG Knowledge Agent")
 
 @mcp.tool()
 def ingest_invoice(text: str, filename: str, metadata: Dict[str, Any] = {}) -> str:
-    return logic_ingest_invoice(text, filename, metadata)
-
-@mcp.tool()
-def retrieve_context(query: str) -> str:
-    results = logic_retrieve_context(query)
-    return str(results)
+    """
+    Ingests invoice text into the vector knowledge base.
+    """
+    # Ensure metadata has filename
+    metadata["filename"] = filename
+    try:
+        return rag_system.add_knowledge(text, metadata)
+    except Exception as e:
+        logger.error(f"Ingest failed: {e}")
+        return f"Error: {e}"
 
 @mcp.tool()
 def ask_question(question: str) -> str:
-    return logic_generate_answer(question)
+    """
+    Answers a question about the invoices using RAG with Reranking and Reflection.
+    Returns the answer text.
+    """
+    try:
+        result = rag_system.ask(question)
+        
+        # Format the output to include the answer + reflection score
+        answer = result["answer"]
+        score = result["evaluation"]["overall_score"]
+        passing = result["evaluation"]["is_passing"]
+        
+        footer = f"\n\n(Confidence: {score:.2f} | Verified: {passing})"
+        return answer + footer
+    except Exception as e:
+        logger.error(f"RAG Query failed: {e}")
+        return f"System Error: {e}"
+
+@mcp.tool()
+def get_retrieval_debug(question: str) -> str:
+    """
+    Returns detailed debugging info about what chunks were retrieved and how they were ranked.
+    """
+    result = rag_system.ask(question)
+    return str(result)
 
 if __name__ == "__main__":
     mcp.run()

@@ -26,7 +26,8 @@ dependencies = [
     "ragas>=0.1.0",
     "pymupdf>=1.23.26",
     "pandas>=2.2.0",
-    "streamlit>=1.32.0"
+    "streamlit>=1.32.0",
+    "datasets>=4.4.1",
 ]
 
 [tool.uv]
