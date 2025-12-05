@@ -3,6 +3,8 @@ pycache/
 logs/
 qdrant_storage/
 processed/
+collect.py
+combined_files.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
