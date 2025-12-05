@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run src.manual_run (venv)",
+            "type": "debugpy",
+            "request": "launch",
+
+            // Run "python -m src.manual_run"
+            "module": "src.manual_run",
+
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        }
+    ]
+}

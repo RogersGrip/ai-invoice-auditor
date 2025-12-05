@@ -89,7 +89,13 @@ Sscripts
 - Once evertyhing is done write tests separate modules and integration testing (not priority its should be at the end)
 
 - NEVER lie or make things up.
+- Follow python standards. Eg: use | instead of optional, use list instead of List
+- feel free to use enums too
 - Refrain from apologizing all the time when results are unexpected. Instead, just try your best to proceed or explain the circumstances to the user without apologizing.
+
+- IN the future sprints include mcp.resource and mcp insepctor
+- Also the logs must go to project root /logs
+- They must be verbose with alld etails, date timestamps everything and colorful with loguru
 
 When debugging, only make code changes if you are certain that you can solve the problem. Otherwise, follow debugging best practices:
 
