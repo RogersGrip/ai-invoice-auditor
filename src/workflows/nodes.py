@@ -29,7 +29,6 @@ def extractor_node(state: InvoiceState) -> InvoiceState:
 def translator_node(state: InvoiceState) -> InvoiceState:
     logger.info(f"Step: Translation (A2A) | File: {state['file_name']}")
     
-    # Call the External Agent
     url = "http://localhost:8001/translate"
     
     payload = {
@@ -44,17 +43,19 @@ def translator_node(state: InvoiceState) -> InvoiceState:
             resp.raise_for_status()
             data = resp.json()
             
-            # Map external agent response to internal state
+            import json
+            pretty_data = json.dumps(data['structured_data'], indent=2)
+            logger.info(f"🔍 EXTRACTED DATA:\n{pretty_data}")
+
             state['extracted_data'] = data['structured_data']
             state['standardized_invoice'] = data['structured_data']
             
-            # Check for explicit errors in JSON response
             if data.get('structured_data', {}).get('error'):
                  raise ValueError(data['structured_data']['error'])
 
             state['current_step'] = "translator"
             state['status'] = ProcessingStatus.TRANSLATED
-            
+
     except Exception as e:
         logger.error(f"Translation Agent Failed: {e}")
         state['error'] = f"Translation Agent Error: {e}"

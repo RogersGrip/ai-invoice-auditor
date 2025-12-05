@@ -17,20 +17,35 @@ def main():
     monitor = InvoiceMonitorAgent()
     app = create_invoice_graph()
     
-    logger.info("System Watchdog Active. Waiting for invoices in 'data/invoices'...")
+    logger.info(f"Monitoring Inbox: {monitor.watch_dir}")
+    logger.info(f"Archive Folder:   {monitor.processed_dir}")
     
     try:
         while True:
-            # 2. Poll for files
-            new_jobs = monitor.scan()
+            # 2. Poll for files (Returns sorted list of current inbox)
+            # Since we move files after processing, this list will naturally empty out.
+            pending_jobs = monitor.scan()
             
-            for job in new_jobs:
-                logger.info(f"🚀 Starting Workflow for: {job['file_path']}")
+            if not pending_jobs:
+                # No files? Sleep and wait.
+                time.sleep(2)
+                continue
+                
+            logger.info(f"Found {len(pending_jobs)} pending invoices. Processing...")
+
+            for job in pending_jobs:
+                file_path = job['file_path']
+                
+                # Double check file still exists (race condition check)
+                if not os.path.exists(file_path):
+                    continue
+
+                logger.info(f"🚀 Starting Workflow for: {os.path.basename(file_path)}")
                 
                 # 3. Initialize State
                 initial_state: InvoiceState = {
-                    "file_path": job['file_path'],
-                    "file_name": os.path.basename(job['file_path']),
+                    "file_path": file_path,
+                    "file_name": os.path.basename(file_path),
                     "metadata": job['metadata'],
                     "raw_text": None,
                     "extracted_data": {},
@@ -42,14 +57,21 @@ def main():
                 }
                 
                 # 4. Invoke Graph
-                # invoke() blocks until the graph reaches END
-                final_state = app.invoke(initial_state)
+                try:
+                    final_state = app.invoke(initial_state)
+                    logger.info(f"🏁 Workflow Finished. Status: {final_state['status']}")
+                except Exception as e:
+                    logger.error(f"Workflow Critical Fail: {e}")
                 
-                logger.info(f"🏁 Workflow Finished. Status: {final_state['status']}")
-                logger.info("=" * 40)
+                # 5. Archive the File (Move to Processed)
+                # We archive regardless of success/failure to prevent blocking the queue.
+                # Failed files will be in 'processed' with logs indicating the error.
+                monitor.archive(file_path)
+                
+                logger.info("-" * 40)
 
-            # Polling interval to prevent CPU spiking
-            time.sleep(2)
+            # Short pause after clearing a batch
+            time.sleep(1)
             
     except KeyboardInterrupt:
         logger.info("Shutting down gracefully...")
