@@ -32,7 +32,7 @@ def logic_validate_line_item(item_code: str, unit_price: float, currency: str) -
             "erp_price": None
         }
 
-    # 2. Find Expected Price from PO History
+    # 2. Retrieve Reference Price from Purchase Orders
     pos = mock_db.load_po_records()
     found_price = None
     
@@ -47,11 +47,11 @@ def logic_validate_line_item(item_code: str, unit_price: float, currency: str) -
     if found_price is None:
          return {
             "status": "warning",
-            "reason": f"SKU {item_code} found, but no PO history to compare price.",
+            "reason": f"SKU {item_code} found, but no PO history available for price comparison.",
             "erp_price": None
         }
 
-    # 3. Check Tolerance (5%)
+    # 3. Calculate Price Deviation
     difference = abs(unit_price - found_price)
     percent_diff = (difference / found_price) * 100
     
@@ -68,6 +68,7 @@ def logic_validate_line_item(item_code: str, unit_price: float, currency: str) -
         "reason": "Price and SKU validated successfully.",
         "erp_price": found_price
     }
+
 
 @mcp.resource("erp://po_records")
 def get_po_records() -> str:
