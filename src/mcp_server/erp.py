@@ -1,38 +1,26 @@
 import json
 from fastmcp import FastMCP
-from typing import Any
+from typing import Any, Dict
 from src.core.mock_data_loader import mock_db
 from loguru import logger
 
-# Initialize Server
 mcp = FastMCP("Mock ERP Agent")
 
-def logic_get_po_records() -> str:
-    """Internal logic to fetch PO records."""
-    data = mock_db.load_po_records()
-    return json.dumps(data, indent=2)
 
-def logic_get_sku_master() -> str:
-    """Internal logic to fetch SKU master."""
-    data = mock_db.load_sku_master()
-    return json.dumps(data, indent=2)
-
-def logic_validate_line_item(item_code: str, unit_price: float, currency: str) -> dict[str, Any]:
-    """Internal logic to validate a single line item."""
-    logger.info(f"Validating {item_code} @ {unit_price} {currency}")
+def logic_validate_line_item(item_code: str, unit_price: float, currency: str) -> Dict[str, Any]:
+    logger.debug(f"ERP Logic Check: {item_code} @ {unit_price} {currency}")
     
-    # 1. Load Master Data
     skus = mock_db.load_sku_master()
     sku_data = next((item for item in skus if item["item_code"] == item_code), None)
     
     if not sku_data:
+        logger.warning(f"ERP Mismatch: SKU {item_code} not found in master.")
         return {
             "status": "mismatch",
             "reason": f"SKU {item_code} not found in ERP Master.",
             "erp_price": None
         }
 
-    # 2. Retrieve Reference Price from Purchase Orders
     pos = mock_db.load_po_records()
     found_price = None
     
@@ -45,17 +33,18 @@ def logic_validate_line_item(item_code: str, unit_price: float, currency: str) -
             break
             
     if found_price is None:
+         logger.warning(f"ERP Warning: SKU {item_code} exists but no PO price history.")
          return {
             "status": "warning",
-            "reason": f"SKU {item_code} found, but no PO history available for price comparison.",
+            "reason": f"SKU {item_code} found, but no PO history.",
             "erp_price": None
         }
 
-    # 3. Calculate Price Deviation
     difference = abs(unit_price - found_price)
     percent_diff = (difference / found_price) * 100
     
     if percent_diff > 5.0:
+        logger.info(f"ERP Discrepancy: {item_code} | Inv: {unit_price} vs ERP: {found_price} ({percent_diff:.2f}%)")
         return {
             "status": "discrepancy",
             "reason": f"Price mismatch > 5%. Invoice: {unit_price}, ERP: {found_price}",
@@ -69,21 +58,19 @@ def logic_validate_line_item(item_code: str, unit_price: float, currency: str) -
         "erp_price": found_price
     }
 
+# --- MCP Tools ---
 
 @mcp.resource("erp://po_records")
 def get_po_records() -> str:
-    return logic_get_po_records()
+    return json.dumps(mock_db.load_po_records(), indent=2)
 
 @mcp.resource("erp://sku_master")
 def get_sku_master() -> str:
-    return logic_get_sku_master()
+    return json.dumps(mock_db.load_sku_master(), indent=2)
 
 @mcp.tool()
-def validate_line_item(item_code: str, unit_price: float, currency: str) -> dict[str, Any]:
-    """
-    Validates a single invoice line item against the ERP SKU Master.
-    Checks for price discrepancies greater than 5%.
-    """
+def validate_line_item(item_code: str, unit_price: float, currency: str) -> Dict[str, Any]:
+    """Validates invoice line item against ERP records."""
     return logic_validate_line_item(item_code, unit_price, currency)
 
 if __name__ == "__main__":
