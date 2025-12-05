@@ -2,11 +2,12 @@ import json
 from pathlib import Path
 from typing import List, Dict, Any
 from loguru import logger
+from src.core.logger import find_project_root
 
 class MockDataLoader:
     def __init__(self):
         # Ascend to project root from: src/core/mock_data_loader.py
-        self.project_root = Path(__file__).resolve().parent.parent.parent
+        self.project_root = find_project_root(Path(__file__).resolve())
         
         # Point to your specific mock data folder
         self.data_dir = self.project_root / "mock_records" / "validation_data"

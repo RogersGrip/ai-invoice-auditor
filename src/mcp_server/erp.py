@@ -7,10 +7,6 @@ from loguru import logger
 # Initialize Server
 mcp = FastMCP("Mock ERP Agent")
 
-# ==========================================
-# CORE LOGIC (Pure Python - Testable)
-# ==========================================
-
 def logic_get_po_records() -> str:
     """Internal logic to fetch PO records."""
     data = mock_db.load_po_records()
@@ -72,10 +68,6 @@ def logic_validate_line_item(item_code: str, unit_price: float, currency: str) -
         "reason": "Price and SKU validated successfully.",
         "erp_price": found_price
     }
-
-# ==========================================
-# MCP INTERFACE (Decorators)
-# ==========================================
 
 @mcp.resource("erp://po_records")
 def get_po_records() -> str:

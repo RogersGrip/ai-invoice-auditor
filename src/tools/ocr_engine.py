@@ -27,8 +27,8 @@ class OCREngine:
             for page_num, page in enumerate(doc):
                 text = page.get_text()
                 if text.strip():
-                    text_content.append(f"--- PAGE {page_num + 1} ---\n{text}")
+                    text_content.append(f" PAGE {page_num + 1} \n{text}")
                 else:
-                    text_content.append(f"--- PAGE {page_num + 1} [IMAGE CONTENT DETECTED] ---")
+                    text_content.append(f" PAGE {page_num + 1} [IMAGE CONTENT DETECTED] ")
         
         return "\n".join(text_content)

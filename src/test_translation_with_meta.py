@@ -5,7 +5,7 @@ import json
 async def test_agent():
     url = "http://localhost:8001/translate"
     
-    print(f"--- Testing Translation Agent at {url} ---")
+    print(f" Testing Translation Agent at {url} ")
 
     # 1. Define the Payload (Matches TranslationRequest schema)
     payload = {
@@ -42,13 +42,13 @@ async def test_agent():
                 
                 # Basic validation check
                 if data.get('structured_data'):
-                    print("\n✅ Structured Data extracted successfully.")
+                    print("\n Structured Data extracted successfully.")
             else:
                 print(f"\nFAILED: {resp.status_code}")
                 print(resp.text)
                 
     except Exception as e:
-        print(f"\n❌ Connection Error: {e}")
+        print(f"\nConnection Error: {e}")
         print("Make sure the agent is running: 'uv run python src/adk_agents/translator/main.py'")
 
 if __name__ == "__main__":
