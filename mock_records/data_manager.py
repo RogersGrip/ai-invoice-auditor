@@ -18,7 +18,7 @@ class DataManager:
         Initializes the DataManager with paths for configuration and ERP data.
         """
         
-        # Set paths, defaulting to the current directory if not provided
+        # Set Path
         self.RULES_PATH = Path(rules_path) if rules_path else Path('.')
         self.ERP_DATA_PATH = Path(erp_data_path) if erp_data_path else Path('.')
             

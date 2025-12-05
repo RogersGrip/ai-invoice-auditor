@@ -12,7 +12,7 @@ def run_sprint_1():
     if os.path.exists(source_invoice):
         shutil.copy(source_invoice, "data/invoices/")
 
-    # 1. Scan
+    # 1. Scan for files
     files = monitor.scan()
 
     if files:
@@ -33,7 +33,7 @@ def run_sprint_1():
             "error": None
         }
         
-        # 3. Extract
+        # 2. Extract
         final_state = extractor_node(initial_state)
         
         print("\n" + "="*50)

@@ -2,11 +2,13 @@ from pydantic import BaseModel, Field
 from typing import Any
 
 class TranslationRequest(BaseModel):
+    """Pydantic Model for Translation Request"""
     raw_text: str = Field(..., description="Raw text extracted from the invoice")
     metadata: dict[str, Any] = Field(default_factory=dict, description="File metadata context")
     target_language: str = Field("English", description="Target language")
 
 class TranslationResponse(BaseModel):
+    """Pydantic Model for Translation Response"""
     translated_text: str = Field(..., description="Full text translated to English")
     detected_language: str = Field(..., description="The language detected")
     confidence_score: float = Field(..., description="Confidence of translation (0-1)")

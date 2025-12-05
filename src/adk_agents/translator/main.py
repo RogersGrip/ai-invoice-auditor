@@ -14,8 +14,10 @@ get_logger()
 app = FastAPI(title="Invoice Translator Agent (ADK)", version="1.0")
 service = TranslatorService()
 
+# Endpoint Definitions
 @app.post("/translate", response_model=TranslationResponse)
 async def translate_endpoint(request: TranslationRequest):
+    """Translate an invoice to a specified language"""
     try:
         return service.process(request)
     except Exception as e:
@@ -24,8 +26,9 @@ async def translate_endpoint(request: TranslationRequest):
 
 @app.get("/health")
 def health():
+    """Health check endpoint"""
     return {"status": "active", "agent": "translator"}
 
 if __name__ == "__main__":
-    # Run on port 8001
+    # Run the server on port 8001
     uvicorn.run("src.adk_agents.translator.main:app", host="0.0.0.0", port=8001, reload=True)
