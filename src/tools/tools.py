@@ -7,7 +7,20 @@ from src.core.config import settings
 from src.core.logger import logger
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from litellm import completion
-from langfuse import observe
+
+# --- Langfuse Conditional Import ---
+try:
+    if settings.LANGFUSE_PUBLIC_KEY:
+        from langfuse import observe
+    else:
+        raise ImportError("Langfuse Public Key not set")
+except ImportError:
+    logger.warning("Langfuse disabled: Observability keys missing.")
+    # No-op decorator
+    def observe(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
 
 # Dummy imports for wrappers - enabling dependency injection
 # from src.agents.translator import Translator (Need to decouple)
@@ -261,11 +274,21 @@ class RAGEvaluatorTool(BaseTool):
 
                     generations_list = []
                     for i in range(max(1, n)):
-                        kwargs["n"] = 1
-                        kwargs["response_format"] = {"type": "json_object"}
-                        result = super()._generate(messages, stop, run_manager, **kwargs)
-                        self._clean_generations(result)
-                        generations_list.extend(result.generations)
+                        # Create a fresh copy of kwargs for each iteration
+                        iter_kwargs = kwargs.copy()
+                        iter_kwargs["n"] = 1
+                        iter_kwargs["response_format"] = {"type": "json_object"}
+                        # Enforce timeout to prevent 10-minute hangs
+                        if "timeout" not in iter_kwargs:
+                            iter_kwargs["timeout"] = 60.0 # Increased from 10.0 to 60.0
+
+                        try:
+                            result = super()._generate(messages, stop, run_manager, **iter_kwargs)
+                            self._clean_generations(result)
+                            generations_list.extend(result.generations)
+                        except Exception as e:
+                            logger.error(f"SafeOllamaWrapper Generation Error: {e}")
+                            raise e
 
                     return ChatResult(generations=generations_list)
 
@@ -282,37 +305,47 @@ class RAGEvaluatorTool(BaseTool):
 
                     generations_list = []
                     for i in range(max(1, n)):
-                        kwargs["n"] = 1
+                        iter_kwargs = kwargs.copy()
+                        iter_kwargs["n"] = 1
                         # FORCE JSON MODE for Ollama
-                        kwargs["response_format"] = {"type": "json_object"}
-                        
-                        # Await parent async call
-                        result = await super()._agenerate(messages, stop, run_manager, **kwargs)
-                        self._clean_generations(result)
-                        generations_list.extend(result.generations)
+                        iter_kwargs["response_format"] = {"type": "json_object"}
+                        if "timeout" not in iter_kwargs:
+                            iter_kwargs["timeout"] = 60.0
+
+                        try:
+                            # Await parent async call
+                            result = await super()._agenerate(messages, stop, run_manager, **iter_kwargs)
+                            self._clean_generations(result)
+                            generations_list.extend(result.generations)
+                        except Exception as e:
+                            logger.error(f"SafeOllamaWrapper Async Generation Error: {e}")
+                            raise e
 
                     return ChatResult(generations=generations_list)
 
                 def _clean_generations(self, result: ChatResult):
+                    import re
                     for gen in result.generations:
-                        clean_content = gen.text.strip()
-                        if clean_content.startswith("```json"):
-                            clean_content = clean_content[7:]
-                        if clean_content.startswith("```"):
-                            clean_content = clean_content[3:]
-                        if clean_content.endswith("```"):
-                            clean_content = clean_content[:-3]
-                        clean_content = clean_content.strip()
+                        raw_content = gen.text
+                        clean_content = raw_content.strip()
                         
-                        # Debug Log
-                        if len(clean_content) < 500:
-                            logger.debug(f"Ollama Cleaned: {clean_content}")
+                        match = re.search(r"\{.*\}", clean_content, re.DOTALL)
+                        if match:
+                            clean_content = match.group(0)
+                            logger.debug("SafeOllamaWrapper: Extracted JSON block from output.")
+                        else:
+                            logger.warning(f"SafeOllamaWrapper: Could not find JSON braces in output: {clean_content[:50]}...")
+
+                        try:
+                            json.loads(clean_content)
+                        except json.JSONDecodeError:
+                            logger.warning("SafeOllamaWrapper: Extracted content is still not valid JSON.")
 
                         gen.text = clean_content
                         if hasattr(gen, 'message'):
                             gen.message.content = clean_content
 
-            # --- 1b. Custom LiteLLM Embeddings Wrapper ---
+            # --- 1b. Custom LiteLLM Embeddings Wrapper (unchanged) ---
             class LiteLLMEmbeddings(Embeddings):
                 def __init__(self, model_name: str):
                     self.model = model_name
@@ -336,7 +369,7 @@ class RAGEvaluatorTool(BaseTool):
                         logger.error(f"Embedding failed: {e}")
                         raise e
 
-            # --- 2. Configure LLM Judge ---
+            # --- 2. Configure LLM Judge (unchanged) ---
             model_name = settings.VALIDATION_MODEL
             if settings.MODEL_PROVIDER == "ollama":
                 model_name = f"ollama/{settings.OLLAMA_MODEL}"
@@ -350,7 +383,11 @@ class RAGEvaluatorTool(BaseTool):
                 base_url=settings.OLLAMA_BASE_URL if settings.MODEL_PROVIDER == "ollama" else None
             )
 
-            # --- 3. Configure Embeddings ---
+            # WRAPPER FIX: Explicitly wrap conform to Ragas expectations
+            from ragas.llms import LangchainLLMWrapper
+            ragas_llm = LangchainLLMWrapper(langchain_llm=llm_judge)
+
+            # --- 3. Configure Embeddings (unchanged) ---
             embed_model_name = settings.EMBEDDING_MODEL
             if settings.MODEL_PROVIDER == "ollama":
                 embed_model_name = f"ollama/{settings.OLLAMA_EMBEDDING_MODEL}"
@@ -387,22 +424,22 @@ class RAGEvaluatorTool(BaseTool):
                 context_entity_recall
             ]
             
+            import os
+            if not os.getenv("LANGFUSE_PUBLIC_KEY") and not os.getenv("LANGFUSE_SECRET_KEY"):
+                pass 
+                
             results = evaluate(
                 ds,
                 metrics=metrics,
-                llm=llm_judge,
+                llm=ragas_llm,
                 embeddings=embeddings_wrapper,
-                raise_exceptions=False
+                raise_exceptions=True  # Fail fast! allow our tool-level try/except to catch it immediately
             )
             
             # 4a. Format Output
-            # Ragas 0.4.0 Result object implements __getitem__ but not get()
-            # It also likely has a to_pandas() method or behaves as a dict.
-            # We convert to a standard dict to be safe.
             try:
                 scores = dict(results)
             except Exception:
-                # Fallback if dict() casting fails
                 scores = {}
                 for m in ["faithfulness", "answer_relevancy", "context_precision", "context_recall", "context_entity_recall"]:
                      if m in results:
@@ -410,7 +447,6 @@ class RAGEvaluatorTool(BaseTool):
 
             def safe_get(key):
                 val = scores.get(key, 0.0)
-                # Check for NaN (math.isnan checks floats, but val could be string or None)
                 try:
                     import math
                     if isinstance(val, float) and math.isnan(val):
@@ -431,9 +467,33 @@ class RAGEvaluatorTool(BaseTool):
             return json.dumps(final_metrics)
 
         except (ImportError, Exception) as e:
-            logger.warning(f"RAGAS evaluation failed ({e}). Falling back to LLM Prompt.")
+            logger.warning(f"RAGAS evaluation failed ({e}). Attempting MLflow Evaluation...")
             
-            # Fallback
+            # --- Plan B: MLflow Fallback ---
+            try:
+                from src.langgraph_agents.rag.mlflow_evaluator import MLflowEvaluator
+                mlflow_eval = MLflowEvaluator()
+                mlflow_metrics = mlflow_eval.evaluate(query, answer, context)
+                
+                # Normalize metrics keys to match Ragas output for UI consistency
+                # MLflow returns 'faithfulness/v1/score' etc. or just 'faithfulness' depending on config.
+                # We map them to our standard keys.
+                normalized_metrics = {
+                    "faithfulness": mlflow_metrics.get("faithfulness/v1/score") or mlflow_metrics.get("faithfulness", 0.0),
+                    "answer_relevance": mlflow_metrics.get("answer_relevance/v1/score") or mlflow_metrics.get("answer_relevance", 0.0),
+                    # MLflow might not have recall/precision out of the box without custom prompt, use 0.0 or see what we got
+                    "context_precision": mlflow_metrics.get("context_precision", 0.0),
+                    "context_recall": mlflow_metrics.get("context_recall", 0.0),
+                    "context_entity_recall": 0.0,
+                    "reasoning": "Evaluated using MLflow (GenAI)"
+                }
+                logger.success("MLflow Evaluation Successful (Fallback)")
+                return json.dumps(normalized_metrics)
+                
+            except Exception as mlflow_e:
+                 logger.warning(f"MLflow evaluation also failed ({mlflow_e}). Falling back to simple LLM Prompt.")
+
+            # --- Final Fallback: Simple LLM Prompt ---
             try:
                 from src.core.prompts import load_prompt
                 raw_prompt = load_prompt("rag_evaluator.txt")
@@ -458,6 +518,6 @@ class RAGEvaluatorTool(BaseTool):
                 return content
             except Exception as fallback_error:
                 return json.dumps({
-                    "error": f"Both RAGAS and Fallback failed. Ragas: {e}",
+                    "error": f"All evaluation methods failed. Ragas: {e}, MLflow: {mlflow_e}",
                     "faithfulness": 0
                 })

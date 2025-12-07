@@ -126,7 +126,9 @@ Project Description:
 An end-to-end Agentic AI-powered system for automated multilingual invoice processing 
 and validation. The solution uses AI Agents to extract, translate, validate, and audit invoices 
 received via email in various formats and languages. It integrates Retrieval-Augmented 
-Generation (RAG) and human-in-the-loop feedback for enhanced accuracy and reliability. 
+- Generation (RAG) and human-in-the-loop feedback for enhanced accuracy and reliability. 
+- human-in-the-loop feedback for enhanced accuracy and reliability. 
+for failed reports the human should be able to approve it. add this ability make it full fledged> all the approved and non approoved invoices should be easily visible in ui
 
 ## Business Context: 
 

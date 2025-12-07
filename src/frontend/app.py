@@ -168,20 +168,90 @@ with tab2:
             st.rerun()
 
     # Get both HTML and JSON reports
-    html_reports = []
+    json_reports = []
     if OUTPUT_DIR.exists():
-        html_reports = sorted(list(OUTPUT_DIR.glob("*.html")), key=os.path.getmtime, reverse=True)
+        json_reports = sorted(list(OUTPUT_DIR.glob("*_report.json")), key=os.path.getmtime, reverse=True)
     
-    if html_reports:
-        selected_file = st.selectbox("Select Report to View", [r.name for r in html_reports])
+    # --- HITL: Filter State ---
+    filter_status = st.radio("Filter by Status", ["All", "Failed / Action Required", "Approved (Auto + Manual)"], horizontal=True)
+
+    filtered_files = []
+    file_map = {}
+    
+    for j_path in json_reports:
+        try:
+            with open(j_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            is_valid_auto = data.get("validation", {}).get("is_valid", False)
+            is_approved_human = data.get("validation", {}).get("approved_by_human", False)
+            
+            status_label = "Approved" if (is_valid_auto or is_approved_human) else "Failed"
+            
+            include = True
+            if filter_status == "Failed / Action Required" and status_label == "Approved": include = False
+            if filter_status == "Approved (Auto + Manual)" and status_label == "Failed": include = False
+            
+            if include:
+                base_name = j_path.name.replace("_report.json", "")
+                label = f"{'✅' if status_label == 'Approved' else '❌'} {base_name}"
+                filtered_files.append(label)
+                file_map[label] = j_path
+        except:
+            continue
+
+    if filtered_files:
+        selected_label = st.selectbox("Select Report to View", filtered_files)
         
-        if selected_file:
-            base_name = selected_file.replace(".html", "")
+        if selected_label:
+            json_path = file_map[selected_label]
+            base_name = json_path.name.replace("_report.json", "")
+            
+            # Load Data
+            with open(json_path, "r", encoding="utf-8") as f:
+                report_data = json.load(f)
+                
+            val_data = report_data.get("validation", {})
+            is_valid = val_data.get("is_valid", False)
+            is_manual = val_data.get("approved_by_human", False)
             
             # Paths
-            html_path = OUTPUT_DIR / selected_file
-            pdf_path = OUTPUT_DIR / f"{base_name}.pdf"
-            json_path = OUTPUT_DIR / f"{base_name}.json"
+            html_path = OUTPUT_DIR / f"{base_name}_report.html"
+            pdf_path = OUTPUT_DIR / f"{base_name}_report.pdf"
+
+            # --- Status Header & Actions ---
+            st.divider()
+            s_col1, s_col2 = st.columns([3, 1])
+            with s_col1:
+                if is_valid:
+                    st.success(f"### ✅ Automatically Approved")
+                elif is_manual:
+                    st.success(f"### ✅ Manually Approved by Human")
+                else:
+                    st.error(f"### ❌ Validation Failed - Action Required")
+            
+            with s_col2:
+                # HITL Action Button
+                if not is_valid:
+                    if not is_manual:
+                        if st.button("👍 Verify & Approve", type="primary"):
+                            report_data["validation"]["approved_by_human"] = True
+                            report_data["meta"]["status"] = "APPROVED_MANUAL"
+                            with open(json_path, "w", encoding="utf-8") as f:
+                                json.dump(report_data, f, indent=2)
+                            st.toast("Report Manually Approved!")
+                            time.sleep(1)
+                            st.rerun()
+                    else:
+                        if st.button("↩️ Revoke Approval"):
+                            report_data["validation"]["approved_by_human"] = False
+                            report_data["meta"]["status"] = "FAILED (Revoked)"
+                            with open(json_path, "w", encoding="utf-8") as f:
+                                json.dump(report_data, f, indent=2)
+                            st.toast("Approval Revoked.")
+                            time.sleep(1)
+                            st.rerun()
+            st.divider()
 
             # Tabs for view modes
             view_tab1, view_tab2, view_tab3 = st.tabs(["📄 Web Report", "⬇️ Data & Downloads", "🔍 Raw JSON"])
@@ -190,7 +260,13 @@ with tab2:
                 if html_path.exists():
                     with open(html_path, "r", encoding="utf-8") as f:
                         html_content = f.read()
+                    
+                    # Monkey-patch visual status in HTML for preview? 
+                    # Simpler just to show the frame. The HTML on disk isn't updated unless we regenerate it.
+                    # We could regenerate HTML here if we wanted consistency, but UI header is enough.
                     st.components.v1.html(html_content, height=800, scrolling=True)
+                else:
+                    st.warning("HTML report missing. View JSON tab.")
 
             with view_tab2:
                 st.subheader("Downloads")
@@ -207,11 +283,9 @@ with tab2:
                     c2.download_button("📊 Download JSON", json_data, f"{base_name}.json", "application/json")
 
             with view_tab3:
-                if json_path.exists():
-                    with open(json_path, "r", encoding="utf-8") as f:
-                        st.json(json.load(f))
+                st.json(report_data)
     else:
-        st.info("No reports found yet.")
+        st.info("No matching reports found.")
 
 with tab3:
     st.header("💬 Chat with Invoices")

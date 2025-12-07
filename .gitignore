@@ -6,6 +6,8 @@ processed/
 collect.py
 combined_files.txt
 outputs/
+mlruns/
+mlflow.db
 .pycache/
 
 # Byte-compiled / optimized / DLL files
