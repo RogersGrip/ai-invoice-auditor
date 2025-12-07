@@ -288,26 +288,33 @@ with tab2:
                     with open(html_path, "r", encoding="utf-8") as f:
                         html_content = f.read()
                     
-                    # Monkey-patch visual status in HTML for preview? 
-                    # Simpler just to show the frame. The HTML on disk isn't updated unless we regenerate it.
-                    # We could regenerate HTML here if we wanted consistency, but UI header is enough.
-                    st.components.v1.html(html_content, height=800, scrolling=True)
+                    # SAFETY: Aggressively strip potential auto-download triggers
+                    # 1. Block <script> execution
+                    safe_html = html_content.replace("<script", "<!-- <script").replace("</script>", "</script> -->")
+                    # 2. Block <meta http-equiv="refresh"> redirects
+                    safe_html = safe_html.replace("<meta http-equiv=\"refresh\"", "<!-- <meta refresh blocked")
+                    # 3. Block body onload events
+                    safe_html = safe_html.replace("onload=", "x-onload=")
+                    
+                    st.components.v1.html(safe_html, height=800, scrolling=True)
                 else:
                     st.warning("HTML report missing. View JSON tab.")
 
             with view_tab2:
                 st.subheader("Downloads")
-                c1, c2 = st.columns(2)
-                
-                if pdf_path.exists():
-                    with open(pdf_path, "rb") as f:
-                        pdf_data = f.read()
-                    c1.download_button("📄 Download PDF", pdf_data, f"{base_name}.pdf", "application/pdf")
-                
-                if json_path.exists():
-                    with open(json_path, "r", encoding="utf-8") as f:
-                        json_data = f.read().encode('utf-8')
-                    c2.download_button("📊 Download JSON", json_data, f"{base_name}.json", "application/json")
+                st.info("ℹ️ Links are hidden by default to prevent IDM/Download Managers from auto-downloading.")
+                if st.checkbox("Show Download Links"):
+                    c1, c2 = st.columns(2)
+                    
+                    if pdf_path.exists():
+                        with open(pdf_path, "rb") as f:
+                            pdf_data = f.read()
+                        c1.download_button("📄 Download PDF", pdf_data, f"{base_name}.pdf", "application/pdf")
+                    
+                    if json_path.exists():
+                        with open(json_path, "r", encoding="utf-8") as f:
+                            json_data = f.read().encode('utf-8')
+                        c2.download_button("📊 Download JSON", json_data, f"{base_name}.json", "application/json")
 
             with view_tab3:
                 st.json(report_data)

@@ -5,6 +5,10 @@ if (Test-Path $venvPath) {
     . $venvPath
 }
 
+# CLEANUP: Aggressively remove all local __pycache__ and .cache folders to enforce centralization
+Write-Host "Cleaning up scattered __pycache__ and .cache..." -ForegroundColor Gray
+Get-ChildItem -Path . -Recurse -Include "__pycache__",".cache" -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
 # Centralize Pycache
 $env:PYTHONPYCACHEPREFIX = "$PWD\.pycache"
 if (-not (Test-Path $env:PYTHONPYCACHEPREFIX)) {

@@ -5,6 +5,10 @@ if [ -d ".venv" ]; then
     source .venv/bin/activate
 fi
 
+# CLEANUP: Aggressively remove all local __pycache__ and .cache folders
+echo "Cleaning up scattered __pycache__ and .cache..."
+find . -type d \( -name "__pycache__" -o -name ".cache" \) -exec rm -rf {} + 2>/dev/null
+
 # Centralize Pycache
 export PYTHONPYCACHEPREFIX="$(pwd)/.pycache"
 mkdir -p "$PYTHONPYCACHEPREFIX"
