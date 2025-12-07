@@ -21,11 +21,30 @@ class InvoiceMonitorAgent(Agent):
         self.watch_dir.mkdir(parents=True, exist_ok=True)
         self.processed_dir.mkdir(parents=True, exist_ok=True)
 
+    @property
+    def inputs_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {},
+            "description": "Polling agent, no specific inputs required."
+        }
+
+    @property
+    def outputs_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"},
+                "status": {"type": "string"}
+            }
+        }
+
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
         """
         Scans and returns the next available file as a task.
         Request inputs are ignored as this is a polling agent usually.
         """
+        self.start_as_current_observation(inputs)
         # 1. Scan for jobs
         # For strict tool usage, we could call watcher_tool.run() but logic is internal here for now or we wrap it.
         # Let's keep the logic here for efficiency but return standard response using tool schema concepts if needed.

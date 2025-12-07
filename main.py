@@ -34,9 +34,28 @@ def main():
                 file_path = job['file_path']
                 if not os.path.exists(file_path): 
                     continue
+                thread_id = os.path.splitext(os.path.basename(file_path))[0]
+                config = {"configurable": {"thread_id": thread_id}}
                 
-                logger.info(f"🚀 Starting Workflow for: {os.path.basename(file_path)}")
-                
+                # Check existing state to handle Resume/Archival from external interactions (App)
+                try:
+                    current_snap = app.get_state(config)
+                    if current_snap.values:
+                        current_status = current_snap.values.get("status")
+                        
+                        # Case 1: Already Completed (e.g. Resumed by App)
+                        if current_status == ProcessingStatus.COMPLETED or current_status == "COMPLETED":
+                            logger.info(f"✅ Found Completed Workflow for {thread_id}. Archiving...")
+                            monitor.archive(file_path)
+                            continue
+                            
+                        # Case 2: Paused (Waiting for HITL)
+                        if current_snap.next:
+                            logger.info(f"⏳ Workflow for {thread_id} is PAUSED at {current_snap.next}. Waiting for App approval...")
+                            continue
+                except Exception as check_e:
+                    logger.warning(f"State check failed (assuming new): {check_e}")
+
                 initial_state: InvoiceState = {
                     "file_path": file_path,
                     "file_name": os.path.basename(file_path),
@@ -51,12 +70,28 @@ def main():
                 }
                 
                 try:
-                    final_state = app.invoke(initial_state)
-                    logger.info(f"🏁 Workflow Finished. Status: {final_state['status']}")
+                    # Use invoke with config to persist state
+                    # invoke() returns the final state of THIS execution step.
+                    final_state = app.invoke(initial_state, config=config)
+                    logger.info(f"🏁 Workflow Step Finished. Status: {final_state.get('status')}")
+                    
+                    # Re-check state to see if valid pause or really finished
+                    final_snap = app.get_state(config)
+                    
+                    if final_snap.next:
+                         logger.info(f"⏸️ Workflow Paused at: {final_snap.next}")
+                         # Do NOT archive yet. Wait for human approval.
+                         continue
+                    
+                    # If we got here and no next, likely finished. 
+                    if final_state.get("status") == ProcessingStatus.COMPLETED or final_state.get("status") == "COMPLETED":
+                        monitor.archive(file_path)
+                        
                 except Exception as e:
-                    logger.error(f"Workflow Critical Fail: {e}")
+                    logger.error(f"Workflow Exception: {e}")
+                    # If it's just an interrupt, we presumably moved on. But 'invoke' behavior varies.
+                    # Assuming standard behavior: returns state.
                 
-                monitor.archive(file_path)
                 logger.info("-" * 40)
             
             time.sleep(1)

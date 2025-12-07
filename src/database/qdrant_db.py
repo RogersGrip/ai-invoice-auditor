@@ -113,6 +113,34 @@ class VectorDB:
             
         return point_id
 
+    def delete_file(self, filename: str) -> None:
+        """
+        Removes all points associated with a specific filename from the vector DB.
+        Useful for deduplication before re-indexing.
+        """
+        client = self._get_client()
+        try:
+            # Check if collection exists first
+            if not client.collection_exists(self.collection_name):
+                 return
+
+            logger.info(f"Removing existing vectors for file: {filename}")
+            client.delete(
+                collection_name=self.collection_name,
+                points_selector=Filter(
+                    must=[
+                        FieldCondition(
+                            key="filename",
+                            match=MatchValue(value=filename)
+                        )
+                    ]
+                )
+            )
+        except Exception as e:
+            logger.warning(f"Failed to delete existing vectors for {filename}: {e}")
+        finally:
+            client.close()
+
     def search(self, query: str, limit: int = 5, filename: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Semantic search with optional filename filtering.

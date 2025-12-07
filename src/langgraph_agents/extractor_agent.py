@@ -13,7 +13,30 @@ class ExtractorAgent(Agent):
     def __init__(self):
         self.harvester_tool = DataHarvesterTool()
 
+    @property
+    def inputs_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"},
+                "metadata": {"type": "object"}
+            },
+            "required": ["file_path"]
+        }
+
+    @property
+    def outputs_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "raw_text": {"type": "string"},
+                "file_path": {"type": "string"},
+                "metadata": {"type": "object"}
+            }
+        }
+
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
+        self.start_as_current_observation(inputs)
         file_path = inputs.get("file_path")
         metadata = inputs.get("metadata", {})
         

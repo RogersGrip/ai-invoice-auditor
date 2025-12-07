@@ -12,10 +12,31 @@ class IndexingAgent(Agent):
     def __init__(self):
         self.indexer_tool = VectorIndexerTool()
 
+    @property
+    def inputs_schema(self) -> Dict[str, Any]:
+        return {
+             "type": "object",
+             "properties": {
+                 "text": {"type": "string"},
+                 "filename": {"type": "string"},
+                 "metadata": {"type": "object"}
+             }
+        }
+
+    @property
+    def outputs_schema(self) -> Dict[str, Any]:
+        return {
+             "type": "object",
+             "properties": {
+                 "chunks_indexed": {"type": "integer"}
+             }
+        }
+
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
         """
         Expects keys: 'text', 'filename', 'metadata'
         """
+        self.start_as_current_observation(inputs)
         text = inputs.get("text", "")
         filename = inputs.get("filename", "unknown")
         meta = inputs.get("metadata", {})

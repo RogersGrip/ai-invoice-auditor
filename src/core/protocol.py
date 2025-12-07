@@ -44,10 +44,29 @@ class Agent(ABC):
     def description(self) -> str:
         pass
 
+    @property
+    @abstractmethod
+    def inputs_schema(self) -> Dict[str, Any]:
+        """JSON Schema for expected inputs."""
+        pass
+
+    @property
+    @abstractmethod
+    def outputs_schema(self) -> Dict[str, Any]:
+        """JSON Schema for expected outputs."""
+        pass
+
     @abstractmethod
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
         """Main execution entry point."""
         pass
+
+    def start_as_current_observation(self, inputs: Dict[str, Any]):
+        """
+        Standard logging/trace method for observability.
+        """
+        from loguru import logger
+        logger.info(f"[{self.name}] STARTING OBSERVATION with inputs: {list(inputs.keys())}")
 
 # --- MCP Protocol Interfaces ---
 

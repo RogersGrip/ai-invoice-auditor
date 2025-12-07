@@ -234,18 +234,45 @@ with tab2:
                 # HITL Action Button
                 if not is_valid:
                     if not is_manual:
+                        # Comment Input
+                        comment = st.text_area("Approval Note (Optional)", placeholder="Reason for overriding...")
+                        
                         if st.button("👍 Verify & Approve", type="primary"):
                             report_data["validation"]["approved_by_human"] = True
                             report_data["meta"]["status"] = "APPROVED_MANUAL"
+                            report_data["validation"]["human_comment"] = comment # Save comment
+                            
                             with open(json_path, "w", encoding="utf-8") as f:
                                 json.dump(report_data, f, indent=2)
+                            
+                            # RESUME WORKFLOW (HITL)
+                            try:
+                                # Ensure we use the exact same DB path logic as Graph
+                                from src.core.config import settings
+                                # Force re-creation of graph to ensure it picks up the right checkpointer path if dynamic
+                                from src.workflows.graph import create_invoice_graph
+                                app_graph = create_invoice_graph()
+                                
+                                # The base_name is the thread_id
+                                config = {"configurable": {"thread_id": base_name}}
+                                st.toast("Resuming Workflow...")
+                                
+                                # Invoke with None to resume from interruption
+                                # We can pass the comment as state update if we wanted, but updating JSON is enough for record.
+                                app_graph.invoke(None, config=config)
+                                st.success("Workflow Resumed & Completed!")
+                            except Exception as e:
+                                st.error(f"Failed to resume workflow: {e}")
+                                
                             st.toast("Report Manually Approved!")
                             time.sleep(1)
                             st.rerun()
                     else:
+                        st.info(f"Approved with comment: {val_data.get('human_comment', 'None')}")
                         if st.button("↩️ Revoke Approval"):
                             report_data["validation"]["approved_by_human"] = False
                             report_data["meta"]["status"] = "FAILED (Revoked)"
+                             # Keep comment or clear? Let's keep for history
                             with open(json_path, "w", encoding="utf-8") as f:
                                 json.dump(report_data, f, indent=2)
                             st.toast("Approval Revoked.")
@@ -336,8 +363,12 @@ with tab3:
                             }
                             st.table(metrics)
                             st.write(f"**Reasoning:** {eval_data.get('reasoning', 'N/A')}")
+                            st.write(f"**Reasoning:** {eval_data.get('reasoning', 'N/A')}")
                         else:
-                            st.json(eval_data)
+                            if isinstance(eval_data, (dict, list)):
+                                st.json(eval_data)
+                            else:
+                                st.text(str(eval_data))
                         
                         ctx = response.get("context", "")
                         if isinstance(ctx, list): ctx = "\n\n".join([str(c) for c in ctx])

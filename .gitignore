@@ -8,6 +8,8 @@ combined_files.txt
 outputs/
 mlruns/
 mlflow.db
+invoices/
+processed/
 .pycache/
 
 # Byte-compiled / optimized / DLL files
@@ -183,3 +185,4 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+data/status.json

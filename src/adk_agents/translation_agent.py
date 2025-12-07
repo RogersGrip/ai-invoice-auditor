@@ -1,29 +1,22 @@
-import os
+from typing import Dict, Any
 import uuid
 from datetime import datetime
-from typing import Dict, Any
 from src.core.protocol import Agent, AgentResponse
-from src.core.config import settings
 from src.core.logger import logger
-from langfuse import observe
-from src.tools.tools import ResponseSynthesizerTool
+from src.tools.tools import LangBridgeTool
 
-class GenerationAgent(Agent):
-    name = "Generation Agent"
-    description = "Generates natural language answers using retrieved context."
-
-    def __init__(self):
-        self.synthesizer_tool = ResponseSynthesizerTool()
+class TranslationAgent(Agent):
+    name = "Translation Agent"
+    description = "Detects language and translates content to English if necessary."
 
     @property
     def inputs_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "query": {"type": "string"},
-                "context": {"type": "string"}
+                "raw_text": {"type": "string"}
             },
-            "required": ["query", "context"]
+            "required": ["raw_text"]
         }
 
     @property
@@ -31,51 +24,52 @@ class GenerationAgent(Agent):
         return {
             "type": "object",
             "properties": {
-                "answer": {"type": "string"},
-                "query": {"type": "string"},
-                "context": {"type": "string"}
+                "english_text": {"type": "string"},
+                "extracted_data": {"type": "object"},
+                "model": {"type": "string"}
             }
         }
 
-    @observe(name="GenerationAgent.process")
+    def __init__(self):
+        self.bridge_tool = LangBridgeTool()
+
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
         self.start_as_current_observation(inputs)
-        payload = inputs.get("payload", {})
-        query = inputs.get("query") or payload.get("query")
-        context = inputs.get("context") or payload.get("context", "")
         
-        if not query:
-             return AgentResponse(
+        # Resolve Input
+        raw_text = inputs.get("raw_text")
+        if not raw_text and inputs.get("payload"):
+            raw_text = inputs["payload"].get("raw_text")
+
+        if not raw_text:
+            return AgentResponse(
                  id=str(uuid.uuid4()),
                  source_agent=self.name,
                  timestamp=datetime.now().isoformat(),
                  target_agent="Error Handler",
                  message_type="ERROR",
-                 payload={"error": "No query provided"},
+                 payload={"error": "No text to translate"},
                  context_id=inputs.get("context_id")
-             )
+            )
+
+        logger.info(f"[{self.name}] Calling Lang-Bridge Tool...")
         
         try:
-            logger.info(f"Generation Agent: Synthesizing answer...")
-            
-            output = self.synthesizer_tool.run(query, context)
+            # Strict Tool Call
+            result = self.bridge_tool.run(raw_text)
             
             return AgentResponse(
                 id=str(uuid.uuid4()),
-                source_agent=self.name,
                 timestamp=datetime.now().isoformat(),
-                target_agent="Reflection Agent",
+                source_agent=self.name,
+                target_agent="Data Validation Agent",
                 message_type="TASK_HANDOFF",
-                payload={
-                    "answer": output,
-                    "query": query,
-                    "context": context
-                },
+                payload=result, # Contains extracted_data, english_text, model
                 context_id=inputs.get("context_id")
             )
             
         except Exception as e:
-            logger.error(f"Generation failed: {e}")
+            logger.error(f"Translation Failed: {e}")
             return AgentResponse(
                  id=str(uuid.uuid4()),
                  source_agent=self.name,
@@ -84,4 +78,4 @@ class GenerationAgent(Agent):
                  message_type="ERROR",
                  payload={"error": str(e)},
                  context_id=inputs.get("context_id")
-             )
+            )

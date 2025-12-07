@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: Optional[str] = None
     LANGFUSE_SECRET_KEY: Optional[str] = None
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
+    LANGFUSE_HOST: str = "https://cloud.langfuse.com"
+
+    @property
+    def DATA_DIR(self):
+        from pathlib import Path
+        # Assuming QDRANT_PATH relative to root or similar.
+        # Let's base it on file location of config.py -> ../../..
+        # Or better, just use absolute path of "data" current working dir if reliable
+        # But safest is relative to this file
+        return Path(__file__).resolve().parent.parent.parent / "data"
 
     model_config = SettingsConfigDict(
         env_file=".env",

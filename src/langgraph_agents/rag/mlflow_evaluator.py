@@ -124,8 +124,9 @@ class MLflowEvaluator:
             return {
                 "faithfulness": scores["faithfulness_normalized"],
                 "answer_relevance": scores["answer_relevance_normalized"],
-                "context_precision": 0.0,
-                "context_recall": 0.0
+                "context_precision": 0.0, # Not computed by simple LLM judge
+                "context_recall": 0.0,    # Not computed by simple LLM judge
+                "context_entity_recall": 0.0 # Not computed by simple LLM judge
             }
             
         except Exception as e:

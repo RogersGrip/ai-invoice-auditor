@@ -7,18 +7,18 @@ from src.core.protocol import AgentResponse
 
 # Import Agents (New Structure)
 from src.langgraph_agents.extractor_agent import ExtractorAgent
-from src.langgraph_agents.translation_agent import TranslatorAgent
-from src.langgraph_agents.validation_agent import DataValidationAgent
+from src.adk_agents.translation_agent import TranslationAgent
+from src.adk_agents.validation_agent import DataValidationAgent
 from src.adk_agents.business_validator_agent import BusinessValidationAgent
-from src.langgraph_agents.reporting_agent import ReporterAgent
+from src.adk_agents.reporting_agent import ReportingAgent
 from src.langgraph_agents.rag.indexer import IndexingAgent
 
 # Initialize Agents
 extractor = ExtractorAgent()
-translator = TranslatorAgent()
+translator = TranslationAgent()
 validator = DataValidationAgent()
 biz_validator = BusinessValidationAgent()
-reporter = ReporterAgent()
+reporter = ReportingAgent()
 indexer = IndexingAgent()
 
 # --- Node Functions ---
@@ -176,9 +176,26 @@ def ingestion_node(state: InvoiceState) -> InvoiceState:
     update_progress(state.file_name, "Ingestion", "Indexing to Vector DB...")
     
     try:
-        if state.raw_text:
+        if state.raw_text or state.extracted_data:
+            # Construct a rich text representation for better RAG retrieval
+            import json
+            
+            structured_summary = ""
+            if state.extracted_data:
+                try:
+                    # Create a clean YAML-like or JSON summary
+                    # JSON is token-heavy but precise. YAML-like is better for LLM reading.
+                    # Let's use formatted JSON for reliability.
+                    structured_summary = f"[STRUCTURED DATA]\n{json.dumps(state.extracted_data, indent=2, default=str)}\n\n"
+                except Exception as je:
+                    logger.warning(f"Failed to serialize extracted data for indexing: {je}")
+            
+            raw_content = f"[RAW CONTENT]\n{state.raw_text}" if state.raw_text else ""
+            
+            full_text_to_index = f"{structured_summary}{raw_content}"
+            
             resp: AgentResponse = indexer.process({
-                "text": state.raw_text,
+                "text": full_text_to_index,
                 "filename": state.file_name,
                 "metadata": state.metadata,
                 "context_id": state.file_name
@@ -239,4 +256,29 @@ def create_invoice_graph():
     workflow.add_edge("reporting", "ingestion")
     workflow.add_edge("ingestion", END)
     
-    return workflow.compile()
+    
+    # 3. Checkpointing for HITL
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    import sqlite3
+    
+    # Use a persistent SQLite DB so main.py and app.py can share state
+    # and resume interrupted workflows.
+    from src.core.config import settings
+    db_path = str(settings.DATA_DIR / "checkpoints.sqlite")
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    checkpointer = SqliteSaver(conn)
+    
+    # DEBUG: List existing checkpoints to debug "Finished" / "No input" error
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id DESC LIMIT 10")
+        rows = cursor.fetchall()
+        logger.info(f"DEBUG: Found Checkpoints for threads: {[r[0] for r in rows]}")
+    except Exception as e:
+        logger.warning(f"DEBUG: Could not list checkpoints: {e}")
+
+    # Interrupt before INGESTION to allow review of generated reports
+    return workflow.compile(
+        checkpointer=checkpointer,
+        interrupt_before=["ingestion"]
+    )

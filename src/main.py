@@ -77,6 +77,9 @@ def main():
     logger.info(f"Archive Folder:   {monitor.processed_dir}")
     
     try:
+        # Track active threads for files in the inbox to prevent re-processing interrupted jobs
+        active_threads: Dict[str, str] = {}
+        
         while True:
             # 2. Poll for files
             # print("DEBUG: Scanning...")
@@ -86,13 +89,35 @@ def main():
                 time.sleep(2)
                 continue
                 
-            logger.info(f"Found {len(pending_jobs)} pending invoices. Processing...")
+            # logger.info(f"Found {len(pending_jobs)} pending invoices. Processing...")
 
             for job in pending_jobs:
                 file_path = job['file_path']
                 
                 if not os.path.exists(file_path):
+                    if file_path in active_threads:
+                        del active_threads[file_path]
                     continue
+
+                # Check if we already have an active thread for this file
+                if file_path in active_threads:
+                    existing_thread_id = active_threads[file_path]
+                    config = {"configurable": {"thread_id": existing_thread_id}}
+                    try:
+                        current_snapshot = app.get_state(config)
+                        if current_snapshot.next:
+                            # It's still interrupted/paused
+                            # logger.debug(f"Skipping {os.path.basename(file_path)} (Thread: {existing_thread_id}) - Waiting for Approval")
+                            continue
+                        else:
+                            # It finished? But file is still here?
+                            # Maybe we should archive it if it's done?
+                            # For HITL, if resumed and finished, it should have been archived.
+                            # If it's here and finished, maybe something went wrong.
+                            pass
+                    except Exception:
+                        # Thread state lost?
+                        del active_threads[file_path]
 
                 # 2a. Prepare Unique Filename (Timestamped)
                 from datetime import datetime
@@ -100,8 +125,26 @@ def main():
                 original_name = os.path.basename(file_path)
                 processed_name = f"{timestamp}_{original_name}"
                 
+                # Register new thread
+                active_threads[file_path] = processed_name
+                
                 logger.info(f"🚀 Starting Workflow for: {original_name} (ID: {processed_name})")
                 
+                # 3a. Check for Existing Thread (Resume or Skip) - DEPRECATED via active_threads check above
+                # But kept for safety if active_threads is cleared
+                config = {"configurable": {"thread_id": processed_name}}
+                
+                try:
+                    current_snapshot = app.get_state(config)
+                    # If we are strictly "waiting for approval" (interrupted)
+                    if current_snapshot.next:
+                         logger.info(f"⏭️  Skipping {original_name}: Workflow is paused/interrupted. (Thread: {processed_name})")
+                         # Optional: Add simple timeouts or checks here to not skip forever if we want to force retry
+                         continue
+                except Exception:
+                     # No state exists, proceed to create new
+                     pass
+
                 # 3. Initialize State (Pydantic Model)
                 initial_state = InvoiceState(
                     file_path=file_path,
@@ -114,8 +157,23 @@ def main():
                 # 4. Invoke Graph
                 try:
                     # LangGraph with Pydantic state returns the updated state dict/model
-                    final_state_output = app.invoke(initial_state)
+                    # invoke now returns the final state snapshot's values
+                    final_state_output = app.invoke(initial_state, config=config)
                     
+                    # Check if interrupted (HITL)
+                    current_snapshot = app.get_state(config)
+                    if current_snapshot.next:
+                        logger.warning(f"⚠️ Workflow Interrupted at inputs: {current_snapshot.next}. Waiting for Approval.")
+                        final_status = "awaiting_approval"
+                        
+                        from src.core.state import update_progress
+                        update_progress(processed_name, "Approval Required", "Paused for Human Review")
+                        
+                        # IMPORTANT: Do NOT archive if interrupted. File stays in inbox.
+                        # Do NOT remove from active_threads.
+                        continue
+                    
+                    # Normal Completion
                     if isinstance(final_state_output, dict):
                          final_status = final_state_output.get("status")
                     else:
@@ -127,17 +185,25 @@ def main():
                     from src.core.state import update_progress
                     update_progress(processed_name, "Completed", f"Done. Status: {final_status}")
                      
+                    # 5. Archive (Only if completed/failed, not interrupted)
+                    monitor.archive(file_path, dest_name=processed_name)
+                    if file_path in active_threads:
+                        del active_threads[file_path]
+                        
+                    logger.info("-" * 40)
+                     
                 except Exception as e:
                     logger.error(f"Workflow Critical Fail: {e}")
                     
                     # Force Update UI to Failed
                     from src.core.state import update_progress
                     update_progress(processed_name, "Failed", f"Error: {e}")
+                    
+                    # Start archiving on failure too so we don't loop forever on a crash
+                    monitor.archive(file_path, dest_name=processed_name)
+                    if file_path in active_threads:
+                        del active_threads[file_path]
                 
-                # 5. Archive (Pass the same processed_name)
-                monitor.archive(file_path, dest_name=processed_name)
-                logger.info("-" * 40)
-            
             time.sleep(1)
             
     except KeyboardInterrupt:

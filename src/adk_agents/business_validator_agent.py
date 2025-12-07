@@ -19,7 +19,28 @@ class BusinessValidationAgent(Agent):
         self.mcp_client = LocalMCPClient(tool_map)
         self.validator_tool = BusinessValidationTool()
 
+    @property
+    def inputs_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "extracted_data": {"type": "object"}
+            }
+        }
+
+    @property
+    def outputs_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "business_validation_status": {"type": "string"},
+                "discrepancies": {"type": "array"},
+                "validated_data": {"type": "object"}
+            }
+        }
+
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
+        self.start_as_current_observation(inputs)
         data = inputs.get("extracted_data", {})
         
         # If passed from DataValidator, it might be in 'content' or mixed.
