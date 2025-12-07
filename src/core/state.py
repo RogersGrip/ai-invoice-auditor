@@ -101,11 +101,13 @@ class InvoiceState(BaseModel):
     
     # Reports
     validation_report: Optional[ValidationResult] = None
-    validation_results: List[str] = Field(default_factory=list)
+    validation_results: Dict[str, Any] = Field(default_factory=dict)
     report_path: Optional[Dict[str, str]] = None
     
     current_step: str = "start"
     status: ProcessingStatus = ProcessingStatus.PENDING
     error: Optional[str] = None
+    error_log: List[str] = Field(default_factory=list)
+    translation_meta: Dict[str, Any] = Field(default_factory=dict)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

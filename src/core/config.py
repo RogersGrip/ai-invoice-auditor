@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -33,9 +33,10 @@ class Settings(BaseSettings):
     OUTPUT_DIR: str = "outputs/reports"
 
     # Langfuse
-    LANGFUSE_PUBLIC_KEY: str | None = None
-    LANGFUSE_SECRET_KEY: str | None = None
-    LANGFUSE_HOST: str | None = "https://cloud.langfuse.com"
+    # Langfuse
+    LANGFUSE_PUBLIC_KEY: Optional[str] = None
+    LANGFUSE_SECRET_KEY: Optional[str] = None
+    LANGFUSE_HOST: str = "https://cloud.langfuse.com"
 
     model_config = SettingsConfigDict(
         env_file=".env",

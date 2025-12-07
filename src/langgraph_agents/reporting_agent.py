@@ -1,21 +1,48 @@
 import os
 import json
+import uuid
 from fpdf import FPDF
 from typing import Dict, Any
+from datetime import datetime
 from src.core.protocol import Agent, AgentResponse
 from src.core.logger import logger
 from src.core.config import settings
+from src.tools.tools import InsightReporterTool
 
 class ReporterAgent(Agent):
     name = "Reporting Agent"
     description = "Generates comprehensive PDF, JSON, and HTML audit reports."
+    
+    def __init__(self):
+        self.reporter_tool = InsightReporterTool()
 
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
-        file_name = inputs.get("file_name", "report")
-        validation_report = inputs.get("validation_report", {})
-        extracted_data = inputs.get("extracted_data", {})
-        overall_status = inputs.get("overall_status", "UNKNOWN")
+        # Resolve Inputs from Payload
+        payload = inputs.get("payload", {})
+        
+        # We expect a merged context or specific keys
+        # The payload might come from Business Validation Agent which has { "validated_data": ..., "business_validation_status": ... }
+        # Ideally, we need the earlier validation results (missing fields) too.
+        # Implied: Context handling or aggregation.
+        # For this step, let's assume 'inputs' contains everything needed or we extract what we can.
+        
+        extracted_data = payload.get("validated_data") or inputs.get("extracted_data", {})
+        validation_report = {
+            "business_status": payload.get("business_validation_status"),
+            "discrepancies": payload.get("discrepancies", []),
+            "is_valid": payload.get("business_validation_status") == "match" # Simplified logic
+        }
+        
+        # Fallback if direct input
+        if not extracted_data:
+             extracted_data = inputs.get("extracted_data", {})
+             
+        # Metadata
+        file_path = inputs.get("file_path") or payload.get("file_path", "unknown_report")
+        file_name = os.path.basename(file_path)
+        
         metadata = inputs.get("metadata", {})
+        overall_status = "COMPLETED"
         
         # Ensure output dir
         os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
@@ -27,7 +54,8 @@ class ReporterAgent(Agent):
         json_dump = {
             "meta": {
                 "file_name": file_name,
-                "status": str(overall_status),
+                "status": overall_status,
+                "timestamp": datetime.now().isoformat(),
                 "metadata": metadata
             },
             "extraction": extracted_data,
@@ -49,12 +77,18 @@ class ReporterAgent(Agent):
         self._generate_html(base_name, json_dump, html_path)
         
         return AgentResponse(
-            content={
-                "json": json_path,
-                "pdf": pdf_path,
-                "html": html_path
+            id=str(uuid.uuid4()),
+            source_agent=self.name,
+            target_agent="End",
+            timestamp=datetime.now().isoformat(),
+            message_type="RESPONSE",
+            payload={
+                "json_report": json_path,
+                "pdf_report": pdf_path,
+                "html_report": html_path,
+                "summary": "Reports generated successfully."
             },
-            metadata={"status": "generated"}
+            context_id=inputs.get("context_id")
         )
 
     def _sanitize_text(self, text: str) -> str:

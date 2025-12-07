@@ -10,8 +10,26 @@ class AgentTool(BaseModel):
     args_schema: Optional[Dict[str, Any]] = None
 
 class AgentResponse(BaseModel):
-    content: Any
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    """
+    Standardized A2A Message Schema.
+    Follows:
+    {
+       "id": "uuid-v4",
+       "timestamp": "iso-8601",
+       "source_agent": "agent_name",
+       "target_agent": "agent_name",
+       "message_type": "TASK_HANDOFF | QUERY | RESPONSE | ERROR",
+       "payload": { ... },
+       "context_id": "trace_id_for_observability"
+    }
+    """
+    id: str = Field(..., description="UUID v4 for the message")
+    timestamp: str = Field(..., description="ISO 8601 timestamp")
+    source_agent: str
+    target_agent: str
+    message_type: str = Field(..., pattern="^(TASK_HANDOFF|QUERY|RESPONSE|ERROR)$")
+    payload: Dict[str, Any]
+    context_id: Optional[str] = None
 
 class Agent(ABC):
     """Abstract Base Class for all Agents adhering to A2A Protocol."""
@@ -37,6 +55,7 @@ class MCPTool(BaseModel):
     name: str
     description: str
     input_schema: Dict[str, Any]
+    output_schema: Optional[Dict[str, Any]] = None
 
 class MCPResource(BaseModel):
     uri: str

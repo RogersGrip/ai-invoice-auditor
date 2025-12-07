@@ -1,8 +1,11 @@
 from typing import Dict, Any, List
-from src.core.protocol import Agent, AgentResponse
+import uuid
+from datetime import datetime
+from src.core.protocol import Agent, AgentResponse, AgentTool
 from src.core.logger import logger
 from src.core.mcp_client import LocalMCPClient
 from src.mcp_server.erp import mcp as erp_server
+from src.tools.tools import BusinessValidationTool
 
 class BusinessValidationAgent(Agent):
     name = "Business Validation Agent"
@@ -10,12 +13,11 @@ class BusinessValidationAgent(Agent):
 
     def __init__(self):
         # Initialize MCP Client connected to the ERP Server's tool registry
-        # FastMCP stores tools in ._tools (internal) or we can expose them.
-        # For safe local access, accessing the decorated functions map:
         tool_map = {
              "validate_line_item": erp_server._tool_manager._tools["validate_line_item"].fn
         }
         self.mcp_client = LocalMCPClient(tool_map)
+        self.validator_tool = BusinessValidationTool()
 
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
         data = inputs.get("extracted_data", {})
@@ -33,6 +35,8 @@ class BusinessValidationAgent(Agent):
         for item in line_items:
             # MCP Tool Call
             try:
+                # In a pure internal MCP setup, tool.run() might call the client.
+                # Here we use the client directly as per design, but could wrap in validator_tool.
                 result = self.mcp_client.call_tool(
                     "validate_line_item",
                     arguments={
@@ -49,7 +53,18 @@ class BusinessValidationAgent(Agent):
                 logger.error(f"MCP Call Failed: {e}")
                 discrepancies.append(f"Validation Error: {str(e)}")
 
+        status = "match" if not discrepancies else "mismatch"
+
         return AgentResponse(
-            content={"discrepancies": discrepancies},
-            metadata={"checks_run": len(line_items)}
+            id=str(uuid.uuid4()),
+            timestamp=datetime.now().isoformat(),
+            source_agent=self.name,
+            target_agent="Reporting Agent",
+            message_type="TASK_HANDOFF",
+            payload={
+                "business_validation_status": status,
+                "discrepancies": discrepancies,
+                "validated_data": data # Pass full data along
+            },
+            context_id=inputs.get("context_id")
         )

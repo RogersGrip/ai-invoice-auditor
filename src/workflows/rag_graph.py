@@ -1,9 +1,10 @@
 from typing import TypedDict, List, Dict, Any
 from langgraph.graph import StateGraph, END
-from src.agents.rag.retriever import RetrievalAgent
-from src.agents.rag.augmenter import AugmentationAgent
-from src.agents.rag.generator import GenerationAgent
-from src.agents.rag.reflector import ReflectionAgent
+from langfuse import observe
+from src.langgraph_agents.rag.retriever import RetrievalAgent
+from src.langgraph_agents.rag.augmenter import AugmentationAgent
+from src.langgraph_agents.rag.generator import GenerationAgent
+from src.langgraph_agents.rag.reflector import ReflectionAgent
 from src.core.logger import logger
 
 # Define RAG State
@@ -21,31 +22,36 @@ generator = GenerationAgent()
 reflector = ReflectionAgent()
 
 # Node Functions
+@observe(name="retrieve_node")
 def retrieve_node(state: RAGState) -> RAGState:
     query = state["query"]
-    resp = retriever.process({"query": query})
-    return {"retrieved_docs": resp.content}
+    resp = retriever.process({"query": query, "context_id": "rag_query"})
+    # AgentResponse uses payload
+    return {"retrieved_docs": resp.payload.get("retrieved_docs")}
 
+@observe(name="augment_node")
 def augment_node(state: RAGState) -> RAGState:
     docs = state["retrieved_docs"]
-    resp = augmenter.process({"docs": docs})
-    return {"context": resp.content}
+    resp = augmenter.process({"docs": docs, "query": state["query"]}) 
+    return {"context": resp.payload.get("context")}
 
+@observe(name="generate_node")
 def generate_node(state: RAGState) -> RAGState:
     resp = generator.process({
         "query": state["query"],
         "context": state["context"]
     })
-    return {"answer": resp.content}
+    return {"answer": resp.payload.get("answer")}
 
+@observe(name="reflect_node")
 def reflect_node(state: RAGState) -> RAGState:
     resp = reflector.process({
         "query": state["query"],
         "answer": state["answer"],
         "context": state["context"]
     })
-    # Since we removed strict JSON mode, treat content as semi-structured text
-    return {"evaluation": {"raw": resp.content}}
+    # Payload contains evaluation dict
+    return {"evaluation": resp.payload.get("evaluation")}
 
 # Build Graph
 def create_rag_graph():

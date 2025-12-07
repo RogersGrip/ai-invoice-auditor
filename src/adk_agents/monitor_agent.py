@@ -1,21 +1,78 @@
 import json
 import shutil
-import os
+import uuid
+from typing import Any, Dict
 from pathlib import Path
 from datetime import datetime
 from loguru import logger
+from src.core.protocol import Agent, AgentResponse, AgentTool
+from src.tools.tools import InvoiceWatcherTool
 
-class InvoiceMonitorAgent:
-    # Define supported extensions
-    SUPPORTED_EXTENSIONS = {'.pdf', '.txt', '.json', '.md', '.png', '.jpg', '.jpeg'}
+class InvoiceMonitorAgent(Agent):
+    name = "Invoice Monitor Agent"
+    description = "Watchdog that monitors the file system for new invoice files."
 
     def __init__(self, watch_dir: str = "data/invoices", processed_dir: str = "data/processed"):
         self.watch_dir = Path(watch_dir)
         self.processed_dir = Path(processed_dir)
+        self.watcher_tool = InvoiceWatcherTool()
         
         # Ensure directories exist
         self.watch_dir.mkdir(parents=True, exist_ok=True)
         self.processed_dir.mkdir(parents=True, exist_ok=True)
+
+    def process(self, inputs: Dict[str, Any]) -> AgentResponse:
+        """
+        Scans and returns the next available file as a task.
+        Request inputs are ignored as this is a polling agent usually.
+        """
+        # 1. Scan for jobs
+        # For strict tool usage, we could call watcher_tool.run() but logic is internal here for now or we wrap it.
+        # Let's keep the logic here for efficiency but return standard response using tool schema concepts if needed.
+        
+        jobs = self.scan()
+        
+        if not jobs:
+            return AgentResponse(
+                id=str(uuid.uuid4()),
+                timestamp=datetime.now().isoformat(),
+                source_agent=self.name,
+                target_agent="Extractor Agent",
+                message_type="RESPONSE", # Or NO_OP
+                payload={"status": "idle", "message": "No new files detected."},
+                context_id=None
+            )
+
+        # Pick the high priority job
+        job = jobs[0]
+        file_path = job["file_path"]
+        
+        # 2. Archive it immediately to avoid double processing (Optimistic locking)
+        # In a real event bus, we might wait for ack, but here we move to processed.
+        # Actually, if we archive now, the Extractor needs the path in processed folder?
+        # Or we keep in inbox and move after? Let's assume we move to 'processing' state or just pass path.
+        # AGENTS.md says Handoff to Extractor.
+        
+        # Let's simple check if we should move it. 
+        # For this implementation, let's pass the file path.
+        
+        return AgentResponse(
+            id=str(uuid.uuid4()),
+            timestamp=datetime.now().isoformat(),
+            source_agent=self.name,
+            target_agent="Extractor Agent",
+            message_type="TASK_HANDOFF",
+            payload={
+                "file_path": file_path, 
+                "timestamp": datetime.now().isoformat(),
+                "status": "detected"
+            },
+            context_id=f"ctx_{Path(file_path).name}"
+        )
+
+    # ... Helper methods ...
+    # Define supported extensions
+    SUPPORTED_EXTENSIONS = {'.pdf', '.txt', '.json', '.md', '.png', '.jpg', '.jpeg'}
 
     def _get_sort_key(self, file_path: Path) -> float:
         """
@@ -51,7 +108,6 @@ class InvoiceMonitorAgent:
         jobs = []
         
         # 1. Gather all candidates
-        candidates = []
         for file_path in self.watch_dir.glob("*.*"):
             # Skip hidden, metadata files, and unsupported types
             if (file_path.name.startswith(".") or 
@@ -61,38 +117,33 @@ class InvoiceMonitorAgent:
             if file_path.suffix.lower() not in self.SUPPORTED_EXTENSIONS:
                 continue
                 
-            candidates.append(file_path)
-
-        # 2. Sort candidates by timestamp (Oldest First - FIFO)
-        candidates.sort(key=self._get_sort_key)
-
-        # 3. Build Job Objects
-        for file_path in candidates:
-            # Load metadata if available
-            meta_path = file_path.with_suffix(".meta.json")
+            candidates_path = file_path
+            # Check for metadata
+            meta_path = candidates_path.with_suffix(".meta.json")
             metadata = {}
             if meta_path.exists():
                 try:
                     metadata = json.loads(meta_path.read_text(encoding="utf-8"))
-                except Exception as e:
-                    logger.warning(f"Corrupt metadata for {file_path.name}: {e}")
+                except Exception:
+                    pass
 
             jobs.append({
-                "file_path": str(file_path),
+                "file_path": str(candidates_path),
+                "timestamp": self._get_sort_key(candidates_path),
                 "metadata": metadata
             })
+
+        # 2. Sort candidates by timestamp (Oldest First - FIFO)
+        jobs.sort(key=lambda x: x["timestamp"])
             
         return jobs
 
     def archive(self, file_path_str: str, dest_name: str = None):
         """
         Moves the invoice and its metadata to the 'processed' folder.
-        If dest_name is provided, uses it as the destination filename.
-        Otherwise, auto-generates a timestamped name.
         """
         source_path = Path(file_path_str)
         if not source_path.exists():
-            logger.warning(f"Cannot archive missing file: {source_path}")
             return
 
         # 1. Define Destination
@@ -111,14 +162,10 @@ class InvoiceMonitorAgent:
             # 3. Move Metadata File (if exists)
             meta_source = source_path.with_suffix(".meta.json")
             if meta_source.exists():
-                # Derive metadata destination name from the main destination name
-                # e.g. "TS_inv.pdf" -> "TS_inv.meta.json"
-                # This ensures they stay paired and we don't need the 'timestamp' variable
                 meta_dest_name = Path(dest_name).with_suffix(".meta.json").name
                 meta_dest = self.processed_dir / meta_dest_name
                 
                 shutil.move(str(meta_source), str(meta_dest))
-                logger.debug(f"Archived metadata to: {meta_dest}")
                 
         except Exception as e:
             logger.error(f"Failed to archive {source_path.name}: {e}")

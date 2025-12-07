@@ -48,7 +48,8 @@ EMBEDDING_MODEL=amazon.titan-embed-text-v1
 
 - Agent personas should describe the tasks clearly.
 
-
+- IF THE GRAPH IS HUGE SPLIT INTO SUBGRAPHS.
+- ALSO SAVE THE PICTURE SOMEWHERE OF THE WHOLE WORKFLOW (LANGGRAPH + SUBGRAPHS + ADK + A2A + TOOLS + MCP)
 - **Clarity over Brevity (When Needed):** While conciseness is key, prioritize clarity for essential explanations or when seeking necessary clarification if a request is ambiguous.
 - **No Chitchat:** Avoid conversational filler, preambles ("Okay, I will now..."), or postambles ("I have finished the changes..."). Get straight to the action or answer.
 - **Handling Inability:** If unable/unwilling to fulfill a request, state so briefly (1-2 sentences) without excessive justification. Offer alternatives if appropriate. DOnt hallucinate and break stuff.
@@ -299,118 +300,266 @@ Masked Invoice.pdf
 • Documentation (setup, usage, agent design, prompt templates) 
 
 
+# =============================================================
+# Agent Cards
+# =============================================================
+# Define the responsibilities, tools, and interaction patterns for each agent.
+# Follow this template for all agents.
 
-- The mock erp backend should check against 
-    - mock records :
-        1. po_records.json
-        [
-    {
-        "po_number": "PO-1001",
-        "vendor_id": "VEND-001",
-        "line_items": [
-            {
-                "item_code": "SKU-001",
-                "description": "Pallet Wrapping Film",
-                "qty": 50,
-                "unit_price": 12.00,
-                "currency": "USD"
-            },
-            {
-                "item_code": "SKU-002",
-                "description": "Industrial Gloves",
-                "qty": 120,
-                "unit_price": 3.00,
-                "currency": "USD"
-            },
-            {
-                "item_code": "SKU-003",
-                "description": "Safety Helmets",
-                "qty": 30,
-                "unit_price": 15.00,
-                "currency": "USD"
-            }
-        ]
-    },
-    {
-        "po_number": "PO-1002",
-        "vendor_id": "VEND-002",
-        "line_items": [
-            {
-                "item_code": "SKU-101",
-                "description": "Container Seals",
-                "qty": 200,
-                "unit_price": 1.25,
-                "currency": "USD"
-            }
-        ]
-    },
+# Template:
+# Agent Name: [Name]
+# Role: [Role Description]
+# Framework: [LangGraph / Google ADK]
+# Tools: [List of MCP Tools]
+# Inputs: [Expected Input Schema]
+# Outputs: [Expected Output Schema]
+# Handoff: [Next Agent in the Pipeline]
 
-    2. sku_master.json
-    [
-    {
-        "item_code": "SKU-001",
-        "category": "Packaging",
-        "uom": "roll",
-        "gst_rate": 10
-    },
-    {
-        "item_code": "SKU-002",
-        "category": "Safety",
-        "uom": "pair",
-        "gst_rate": 10
-    },
-    {
-        "item_code": "SKU-003",
-        "category": "Safety",
-        "uom": "piece",
-        "gst_rate": 10
-    },
-    
-    3. vendors.json
-    [
-    {
-        "vendor_id": "VEND-001",
-        "vendor_name": "Global Logistics Ltd",
-        "country": "UK",
-        "currency": "USD"
-    },
-    {
-        "vendor_id": "VEND-002",
-        "vendor_name": "BlueOcean Transport Co.",
-        "country": "USA",
-        "currency": "USD"
-    },
-    {
-        "vendor_id": "VEND-003",
-        "vendor_name": "Transporte Ibérico S.A.",
-        "country": "Spain",
-        "currency": "EUR"
-    },
+# --- Core Agents ---
 
-The files uploaded also will have meta data file accordinly
+# 1. Invoice Monitor Agent
+# Role: Watchdog that monitors the file system/mailbox for new invoice files.
+# Framework: Google ADK
+# Tools: Invoice-Watcher Tool
+# Inputs: None (Continuous Monitoring)
+# Outputs: { "file_path": str, "timestamp": str, "status": "detected" }
+# Handoff: Extractor Agent
 
-eg : invoice.pdf -> invoice.meta.json
+# 2. Extractor Agent
+# Role: Extracts raw text and structured data (tables, key-values) from documents.
+# Framework: LangGraph
+# Tools: Data Harvester Tool (OCR, PDF Parser)
+# Inputs: { "file_path": str }
+# Outputs: { "raw_text": str, "extracted_data": dict, "metadata": dict }
+# Handoff: Translation Agent
 
-{
-  "sender": "rechnung@hafenlogistik.de",
-  "subject": "Rechnung RE-2025-004 - Bestellung PO-1004",
-  "received_timestamp": "2025-05-02T11:00:00Z",
-  "language": "de",
-  "attachments": ["INV_DE_004.docx"]
-}
+# 3. Translation Agent
+# Role: Detects language and translates content to English if necessary.
+# Framework: LangGraph
+# Tools: Lang-Bridge Tool (LLM Translation)
+# Inputs: { "raw_text": str, "extracted_data": dict }
+# Outputs: { "english_text": str, "translated_data": dict, "original_language": str, "confidence": float }
+# Handoff: Invoice Data Validation Agent
+
+# 4. Invoice Data Validation Agent
+# Role: Checks for missing mandatory fields and data types.
+# Framework: LangGraph
+# Tools: DataCompletenessChecker Tool
+# Inputs: { "translated_data": dict }
+# Outputs: { "validation_status": "valid/invalid", "missing_fields": list, "errors": list }
+# Handoff: Business Validation Agent
+
+# 5. Business Validation Agent
+# Role: Cross-references invoice data with ERP/Mock records.
+# Framework: Google ADK
+# Tools: Business Validation Tool (ERP Lookup)
+# Inputs: { "translated_data": dict }
+# Outputs: { "business_validation_status": "match/mismatch", "discrepancies": list }
+# Handoff: Reporting Agent
+
+# 6. Reporting Agent
+# Role: Aggregates all findings and generates a final report.
+# Framework: LangGraph
+# Tools: Insight Reporter Tool
+# Inputs: { "validation_results": dict, "discrepancies": list, "translation_meta": dict }
+# Outputs: { "report_path": str, "summary": str }
+# Handoff: None (End of Pipeline)
+
+# --- RAG Agents ---
+
+# 7. Indexing Agent
+# Role: Ingests documents into the Vector DB.
+# Framework: LangGraph
+# Tools: Vector-Indexer Tool
+
+# 8. Retrieval Agent
+# Role: Fetches relevant context for user queries.
+# Framework: LangGraph
+# Tools: Semantic-Retriever Tool
+
+# 9. Augmentation Agent
+# Role: Reranks and refines retrieved chunks.
+# Framework: LangGraph
+# Tools: Chunk-Ranker Tool
+
+# 10. Generation Agent
+# Role: Synthesizes the final answer.
+# Framework: LangGraph
+# Tools: Response-Synthesizer Tool
+
+# 11. Reflection Agent
+# Role: Evaluates response quality (RAGAS).
+# Framework: LangGraph
+# Tools: RAG-Evaluator Tool
 
 
-Consider these as well if theyre needed.
+# =============================================================
+# Agent-to-Agent (A2A) Protocol
+# =============================================================
+# Standardized communication schema for agent interoperability.
 
-eg of persona
+# Message Schema:
+# {
+#   "id": "uuid-v4",
+#   "timestamp": "iso-8601",
+#   "source_agent": "agent_name",
+#   "target_agent": "agent_name",
+#   "message_type": "TASK_HANDOFF | QUERY | RESPONSE | ERROR",
+#   "payload": { ... },
+#   "context_id": "trace_id_for_observability"
+# }
 
-Invoice Monitor Agent:
-  persona_role: "System Watchdog"
-  core_responsibility: "Detect new invoices in the designated folder and trigger the processing workflow"
+# Handshake Protocol:
+# 1. Sender Agent validates payload against Target Agent's input schema.
+# 2. Sender sends message via message bus / direct call.
+# 3. Receiver acknowledges receipt (ACK).
+# 4. Receiver processes and sends results back (if QUERY) or triggers next step (if HANDOFF).
 
-make it proper and more descriptive
 
-also for rules use something like this
+# =============================================================
+# Model Context Protocol (MCP) Standards
+# =============================================================
+# Architecture for connecting AI models to data and tools.
+
+# 1. Server-Client Architecture:
+#    - All tools (Vector DB, ERP Mock, OCR) must be exposed as MCP Resources or Tools.
+#    - Agents act as MCP Clients to consume these resources.
+
+# 2. Tool Definition Schema:
+#    - name: str
+#    - description: str
+#    - input_schema: JSON Schema
+#    - output_schema: JSON Schema
+
+# 3. Resource Definition:
+#    - uri: mcp://...
+#    - mime_type: application/json | text/plain
+#    - body: content
+
+
+# =============================================================
+# Responsive UI Guidelines
+# =============================================================
+# Frontend implementation standards for React/Streamlit.
+
+# 1. Framework: React (preferred) or Streamlit (for rapid prototyping).
+# 2. Styling:
+#    - Use TailwindCSS (if React) or custom CSS (if Streamlit) for modern aesthetics.
+#    - Dark/Light mode support.
+#    - Responsive layout (Mobile-first approach not strictly required but desktop must be fluid).
+# 3. Components:
+#    - Dashboard: Overview of processed invoices, success rates, and recent alerts.
+#    - Upload/Monitor Station: Visual indicator of the monitoring folder status.
+#    - Detail View: Side-by-side view of Original Invoice vs. Extracted/Validated Data.
+#    - Chat Interface: For RAG-based Q&A with the documents.
+# 4. Accessibility:
+#    - Proper contrast ratios.
+#    - ARIA labels for interactive elements.
+
+
+# =============================================================
+# Validation Rules & Data
+# =============================================================
+
+# - The mock erp backend should check against 
+#     - mock records :
+#         1. po_records.json
+#         [
+#     {
+#         "po_number": "PO-1001",
+#         "vendor_id": "VEND-001",
+#         "line_items": [
+#             {
+#                 "item_code": "SKU-001",
+#                 "description": "Pallet Wrapping Film",
+#                 "qty": 50,
+#                 "unit_price": 12.00,
+#                 "currency": "USD"
+#             },
+#             {
+#                 "item_code": "SKU-002",
+#                 "description": "Industrial Gloves",
+#                 "qty": 120,
+#                 "unit_price": 3.00,
+#                 "currency": "USD"
+#             },
+#             {
+#                 "item_code": "SKU-003",
+#                 "description": "Safety Helmets",
+#                 "qty": 30,
+#                 "unit_price": 15.00,
+#                 "currency": "USD"
+#             }
+#         ]
+#     },
+#     {
+#         "po_number": "PO-1002",
+#         "vendor_id": "VEND-002",
+#         "line_items": [
+#             {
+#                 "item_code": "SKU-101",
+#                 "description": "Container Seals",
+#                 "qty": 200,
+#                 "unit_price": 1.25,
+#                 "currency": "USD"
+#             }
+#         ]
+#     },
+# 
+#     2. sku_master.json
+#     [
+#     {
+#         "item_code": "SKU-001",
+#         "category": "Packaging",
+#         "uom": "roll",
+#         "gst_rate": 10
+#     },
+#     {
+#         "item_code": "SKU-002",
+#         "category": "Safety",
+#         "uom": "pair",
+#         "gst_rate": 10
+#     },
+#     {
+#         "item_code": "SKU-003",
+#         "category": "Safety",
+#         "uom": "piece",
+#         "gst_rate": 10
+#     },
+#     
+#     3. vendors.json
+#     [
+#     {
+#         "vendor_id": "VEND-001",
+#         "vendor_name": "Global Logistics Ltd",
+#         "country": "UK",
+#         "currency": "USD"
+#     },
+#     {
+#         "vendor_id": "VEND-002",
+#         "vendor_name": "BlueOcean Transport Co.",
+#         "country": "USA",
+#         "currency": "USD"
+#     },
+#     {
+#         "vendor_id": "VEND-003",
+#         "vendor_name": "Transporte Ibérico S.A.",
+#         "country": "Spain",
+#         "currency": "EUR"
+#     },
+# 
+# The files uploaded also will have meta data file accordinly
+# 
+# eg : invoice.pdf -> invoice.meta.json
+# 
+# {
+#   "sender": "rechnung@hafenlogistik.de",
+#   "subject": "Rechnung RE-2025-004 - Bestellung PO-1004",
+#   "received_timestamp": "2025-05-02T11:00:00Z",
+#   "language": "de",
+#   "attachments": ["INV_DE_004.docx"]
+# }
+
 
 # =============================================================
 # AI Invoice Auditor – Validation Rules Configuration

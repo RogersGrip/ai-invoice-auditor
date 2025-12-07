@@ -2,6 +2,17 @@ import time
 import os
 import sys
 import warnings
+from dotenv import load_dotenv
+import litellm
+
+# Load Env for Libraries (Langfuse, etc.)
+load_dotenv()
+
+# Configure LiteLLM to use Langfuse (OTel for v3 SDK)
+if os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY"):
+    litellm.callbacks = ["langfuse_otel"]
+else:
+    print("WARNING: Langfuse keys missing. Observability disabled.")
 
 # Suppress Pydantic deprecation warnings from libraries
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
@@ -11,7 +22,7 @@ print("DEBUG: Handling imports...")
 try:
     from loguru import logger
     print("DEBUG: Loguru imported")
-    from src.agents.monitor import InvoiceMonitorAgent
+    from src.adk_agents.monitor_agent import InvoiceMonitorAgent
     print("DEBUG: Monitor imported")
     from src.workflows.graph import create_invoice_graph
     print("DEBUG: Graph imported")
