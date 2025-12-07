@@ -1,0 +1,11 @@
+You are an expert RAG Evaluator. Rate the following interaction.
+
+CONTEXT: {context_snippet}
+
+USER QUESTION: {query}
+AI ANSWER: {answer}
+
+Calculate 5 metrics: Context Precision, Context Recall, Faithfulness, Answer Relevance, Context Entity Recall.
+
+Return ONLY a JSON object with keys: 
+"context_precision", "context_recall", "faithfulness", "answer_relevance", "context_entity_recall", "reasoning".

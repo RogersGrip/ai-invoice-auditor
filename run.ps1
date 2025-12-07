@@ -21,8 +21,15 @@ Write-Host "Starting AI Invoice Auditor..." -ForegroundColor Cyan
 Write-Host "Pycache centralized at: $env:PYTHONPYCACHEPREFIX" -ForegroundColor Gray
 
 # Start Backend (Shared Terminal)
-Start-Process -FilePath "python" -ArgumentList "-m src.main" -NoNewWindow
+$backend = Start-Process -FilePath "python" -ArgumentList "-m src.main" -NoNewWindow -PassThru
 
 # Start Frontend
 Write-Host "Launching Dashboard..." -ForegroundColor Green
-streamlit run src/frontend/app.py
+try {
+    streamlit run src/frontend/app.py
+} finally {
+    Write-Host "Stopping Backend..." -ForegroundColor Yellow
+    if ($backend) {
+        Stop-Process -Id $backend.Id -ErrorAction SilentlyContinue
+    }
+}

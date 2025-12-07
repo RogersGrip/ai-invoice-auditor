@@ -20,7 +20,10 @@ dependencies = [
     "streamlit>=1.30.0",
     "pymupdf>=1.23.0",
     "instructor>=1.0.0",
-    "langdetect>=1.0.9"
+    "langdetect>=1.0.9",
+    "ragas>=0.1.0",
+    "langchain-community>=0.0.10",
+    "langchain-litellm>=0.3.2",
 ]
 
 [tool.ruff]
