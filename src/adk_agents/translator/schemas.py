@@ -27,7 +27,7 @@ class TranslationRequest(BaseModel):
     target_language: str = Field("English", description="Target language")
 
 class TranslationResponse(BaseModel):
-    translated_text: str = Field(..., description="Full text translated to English")
-    detected_language: str = Field(..., description="The language detected")
-    confidence_score: float = Field(..., description="Confidence of translation (0-1)")
+    translated_text: Optional[str] = Field(None, description="Full text translated to English")
+    detected_language: Optional[str] = Field(None, description="The language detected")
+    confidence_score: Optional[float] = Field(None, description="Confidence of translation (0-1)")
     structured_data: InvoiceDataExtract

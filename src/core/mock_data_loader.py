@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import List, Dict, Any
 from loguru import logger
-from src.core.logger import find_project_root
+from src.core.utils import find_project_root
 
 class MockDataLoader:
     def __init__(self):

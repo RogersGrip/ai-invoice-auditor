@@ -84,9 +84,11 @@ class InvoiceMonitorAgent:
             
         return jobs
 
-    def archive(self, file_path_str: str):
+    def archive(self, file_path_str: str, dest_name: str = None):
         """
         Moves the invoice and its metadata to the 'processed' folder.
+        If dest_name is provided, uses it as the destination filename.
+        Otherwise, auto-generates a timestamped name.
         """
         source_path = Path(file_path_str)
         if not source_path.exists():
@@ -94,20 +96,27 @@ class InvoiceMonitorAgent:
             return
 
         # 1. Define Destination
-        # We append a timestamp to the filename to avoid collisions in the archive
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        dest_name = f"{timestamp}_{source_path.name}"
+        if not dest_name:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dest_name = f"{timestamp}_{source_path.name}"
+            
         dest_path = self.processed_dir / dest_name
 
         try:
             # 2. Move Main File
+            # Check if destination exists to avoid overwrite error or handle it
             shutil.move(str(source_path), str(dest_path))
             logger.info(f"Archived file to: {dest_path}")
 
             # 3. Move Metadata File (if exists)
             meta_source = source_path.with_suffix(".meta.json")
             if meta_source.exists():
-                meta_dest = self.processed_dir / f"{timestamp}_{meta_source.name}"
+                # Derive metadata destination name from the main destination name
+                # e.g. "TS_inv.pdf" -> "TS_inv.meta.json"
+                # This ensures they stay paired and we don't need the 'timestamp' variable
+                meta_dest_name = Path(dest_name).with_suffix(".meta.json").name
+                meta_dest = self.processed_dir / meta_dest_name
+                
                 shutil.move(str(meta_source), str(meta_dest))
                 logger.debug(f"Archived metadata to: {meta_dest}")
                 

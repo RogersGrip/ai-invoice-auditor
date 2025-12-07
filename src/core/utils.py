@@ -1,42 +1,59 @@
-import os
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from langchain_core.runnables.graph import Graph
-from loguru import logger
+from typing import Dict, Any, List
+import os
+from pathlib import Path
 
 console = Console()
 
-def visualize_graph(workflow_app, output_path="docs/workflow_graph.png"):
-    """Generates a PNG visualization of the LangGraph workflow."""
-    try:
-        graph: Graph = workflow_app.get_graph()
-        png_data = graph.draw_mermaid_png()
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        with open(output_path, "wb") as f:
-            f.write(png_data)
-        logger.info(f"Workflow visualization saved to: {output_path}")
-    except Exception as e:
-        logger.warning(f"Could not generate graph visualization (Graphviz required?): {e}")
-
-def print_hitl_analysis(step_name: str, data: dict, logs: list[str]):
+def find_project_root(current_path: str | Path = ".") -> Path:
     """
-    Prints a rich HITL analysis table to the console.
-    This simulates the data review step before approval.
+    Finds the project root by looking for pyproject.toml
     """
-    table = Table(title=f"🔎 HITL Analysis: {step_name}", show_header=True, header_style="bold magenta")
-    table.add_column("Key", style="cyan", no_wrap=True)
-    table.add_column("Value", style="green")
+    current_path = Path(current_path).resolve()
+    for parent in [current_path] + list(current_path.parents):
+        if (parent / "pyproject.toml").exists():
+            return parent
+    return Path(os.getcwd()) # Fallback
 
-    # Add Data
-    for k, v in data.items():
-        if isinstance(v, (dict, list)):
-            v = str(v)[:100] + "..." # Truncate complex objects
-        table.add_row(str(k), str(v))
+def print_hitl_analysis(step_name: str, data: Dict[str, Any] | Any, discrepancies: List[str] = []) -> None:
+    """
+    Renders a Rich table analysis for Human-In-The-Loop review.
+    """
+    console.print(Panel(f"[bold cyan]HITL Analysis: {step_name}[/bold cyan]", expand=False))
     
-    # Add Logs
-    log_content = "\n".join(logs[-5:]) if logs else "No recent logs"
-    
-    console.print(Panel(table, expand=False))
-    console.print(Panel(log_content, title="Recent System Logs", style="yellow"))
-    console.print("[bold red]Action Required:[/bold red] awaiting approval...")
+    # 1. Mismatch / Discrepancy Table
+    if discrepancies:
+        table = Table(title="⚠ Discrepancies Found", style="red")
+        table.add_column("Issue", style="red")
+        for d in discrepancies:
+            table.add_row(d)
+        console.print(table)
+    else:
+        console.print("[bold green]✔ No Discrepancies Found[/bold green]")
+        
+    # 2. Data Snapshot
+    if data:
+        console.print("\n[bold]Current Data Snapshot:[/bold]")
+        # If data is Pydantic model dump
+        if isinstance(data, dict):
+            # Print key fields
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("Field")
+            table.add_column("Value")
+            
+            # Smart filter for display
+            keys_to_show = ['invoice_no', 'invoice_date', 'total_amount', 'currency', 'vendor_id', 'is_valid']
+            for k, v in data.items():
+                if k in keys_to_show or k.startswith('is_'):
+                    table.add_row(k, str(v))
+            
+            if len(table.rows) > 0:
+                console.print(table)
+            else:
+                 console.print(str(data)[:500]) # Fallback
+        else:
+             console.print(str(data)[:500])
+
+    console.print("\n" + "-"*40 + "\n")

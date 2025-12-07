@@ -5,12 +5,21 @@ from langdetect import detect, LangDetectException
 from loguru import logger
 from src.adk_agents.translator.schemas import TranslationRequest, TranslationResponse
 
+from src.core.config import settings
+
 class TranslatorService:
     def __init__(self):
-        self.model = os.getenv("TRANSLATION_MODEL", "bedrock/cohere.command-r-plus-v1:0")
+        if settings.MODEL_PROVIDER == "ollama":
+            self.model = f"ollama/{settings.OLLAMA_MODEL}"
+            base_url = settings.OLLAMA_BASE_URL
+        else:
+            self.model = os.getenv("TRANSLATION_MODEL", "bedrock/cohere.command-r-plus-v1:0")
+            base_url = None
+
         self.client = instructor.from_litellm(
             completion,
-            mode=instructor.Mode.MD_JSON
+            mode=instructor.Mode.MD_JSON,
+            api_base=base_url
         )
 
     def _detect_language(self, text: str, metadata: dict) -> str:

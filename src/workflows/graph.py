@@ -4,42 +4,41 @@ from src.core.state import InvoiceState, ProcessingStatus
 from src.workflows.nodes import (
     extractor_node, 
     translator_node, 
-    validator_node, 
-    reporter_node
+    data_validator_node,
+    business_validator_node,
+    reporter_node,
+    ingestor_node
 )
 
 def route_after_extraction(state: InvoiceState) -> Literal["translator", "reporter"]:
-    """
-    Decides next step after extraction.
-    If extraction failed, skip to reporting.
-    """
-    if state['status'] == ProcessingStatus.FAILED:
+    if state.status == ProcessingStatus.FAILED:
         return "reporter"
     return "translator"
 
-def route_after_translation(state: InvoiceState) -> Literal["validator", "reporter"]:
-    """
-    Decides next step after translation.
-    If translation/A2A failed, skip to reporting.
-    """
-    if state['status'] == ProcessingStatus.FAILED:
+def route_after_data_validation(state: InvoiceState) -> Literal["business_validator", "reporter"]:
+    # If data is missing critical fields, skip business validation?
+    # Or maybe we just report it. 
+    # Let's say if data_invalid, we skip business validation to save tokens/resources.
+    if state.status == ProcessingStatus.DATA_INVALID:
         return "reporter"
-    return "validator"
+    return "business_validator"
 
 def create_invoice_graph():
-    # 1. Initialize Graph
     workflow = StateGraph(InvoiceState)
 
-    # 2. Add Nodes
     workflow.add_node("extractor", extractor_node)
     workflow.add_node("translator", translator_node)
-    workflow.add_node("validator", validator_node)
+    
+    # Split Validation Nodes
+    workflow.add_node("data_validator", data_validator_node)
+    workflow.add_node("business_validator", business_validator_node)
+    
     workflow.add_node("reporter", reporter_node)
+    workflow.add_node("ingestor", ingestor_node)
 
-    # 3. Define Flow & Conditional Logic
     workflow.set_entry_point("extractor")
     
-    # Conditional Edge: Extractor -> (Translator OR Reporter)
+    # Extractor -> Translator (or fail)
     workflow.add_conditional_edges(
         "extractor",
         route_after_extraction,
@@ -48,21 +47,22 @@ def create_invoice_graph():
             "reporter": "reporter"
         }
     )
-
-    # Conditional Edge: Translator -> (Validator OR Reporter)
+    
+    # Translator -> Data Validator
+    workflow.add_edge("translator", "data_validator")
+    
+    # Data Validator -> Business Validator (or fail/skip)
     workflow.add_conditional_edges(
-        "translator",
-        route_after_translation,
+        "data_validator",
+        route_after_data_validation,
         {
-            "validator": "validator",
+            "business_validator": "business_validator",
             "reporter": "reporter"
         }
     )
-
-    # Standard Edge: Validator -> Reporter (Validator always reports results)
-    workflow.add_edge("validator", "reporter")
     
-    # End
-    workflow.add_edge("reporter", END)
+    workflow.add_edge("business_validator", "reporter")
+    workflow.add_edge("reporter", "ingestor")
+    workflow.add_edge("ingestor", END)
 
     return workflow.compile()

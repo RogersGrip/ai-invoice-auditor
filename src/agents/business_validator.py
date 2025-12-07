@@ -1,0 +1,55 @@
+from typing import Dict, Any, List
+from src.core.protocol import Agent, AgentResponse
+from src.core.logger import logger
+from src.core.mcp_client import LocalMCPClient
+from src.mcp_server.erp import mcp as erp_server
+
+class BusinessValidationAgent(Agent):
+    name = "Business Validation Agent"
+    description = "Validates invoice line items against ERP records using MCP."
+
+    def __init__(self):
+        # Initialize MCP Client connected to the ERP Server's tool registry
+        # FastMCP stores tools in ._tools (internal) or we can expose them.
+        # For safe local access, accessing the decorated functions map:
+        tool_map = {
+             "validate_line_item": erp_server._tool_manager._tools["validate_line_item"].fn
+        }
+        self.mcp_client = LocalMCPClient(tool_map)
+
+    def process(self, inputs: Dict[str, Any]) -> AgentResponse:
+        data = inputs.get("extracted_data", {})
+        
+        # If passed from DataValidator, it might be in 'content' or mixed.
+        # We expect the full invoice data here.
+        if hasattr(data, "model_dump"):
+            data = data.model_dump()
+            
+        logger.info("Business Validator: Auditing Lines against ERP via MCP")
+        
+        discrepancies = []
+        line_items = data.get("line_items", [])
+        
+        for item in line_items:
+            # MCP Tool Call
+            try:
+                result = self.mcp_client.call_tool(
+                    "validate_line_item",
+                    arguments={
+                        "item_code": item.get("item_code", "UNKNOWN"),
+                        "unit_price": item.get("unit_price", 0.0),
+                        "currency": item.get("currency", "USD")
+                    }
+                )
+                
+                if result["status"] != "match":
+                    discrepancies.append(f"{item.get('item_code')}: {result.get('reason')}")
+                    
+            except Exception as e:
+                logger.error(f"MCP Call Failed: {e}")
+                discrepancies.append(f"Validation Error: {str(e)}")
+
+        return AgentResponse(
+            content={"discrepancies": discrepancies},
+            metadata={"checks_run": len(line_items)}
+        )

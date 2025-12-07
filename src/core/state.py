@@ -1,6 +1,20 @@
+import json
 from enum import Enum
-from typing import TypedDict, Any
-from pydantic import BaseModel, Field
+from typing import Dict, Any, List, Optional
+from pydantic import BaseModel, Field, ConfigDict
+
+# Helper for frontend visualization
+def update_progress(file_name: str, step: str, status: str = "processing"):
+    try:
+        with open("data/status.json", "w") as f:
+            json.dump({
+                "current_file": file_name,
+                "step": step,
+                "status": status,
+                "timestamp": __import__("time").time()
+            }, f)
+    except Exception:
+        pass
 
 class ProcessingStatus(str, Enum):
     PENDING = "pending"
@@ -9,39 +23,56 @@ class ProcessingStatus(str, Enum):
     VALIDATED = "validated"
     COMPLETED = "completed"
     FAILED = "failed"
+    DATA_INVALID = "data_invalid"
+    FLAGGED = "flagged"
 
 class LineItem(BaseModel):
-    item_code: str | None = Field(None, description="SKU or Item Code")
-    description: str | None = None
-    qty: float | None = None
-    unit_price: float | None = None
-    currency: str | None = None
-    total: float | None = None
+    item_code: Optional[str] = Field(None, description="SKU or Item Code")
+    description: Optional[str] = None
+    qty: Optional[float] = None
+    unit_price: Optional[float] = None
+    currency: Optional[str] = None
+    total: Optional[float] = None
 
 class InvoiceData(BaseModel):
-    invoice_no: str | None = None
-    invoice_date: str | None = None
-    vendor_id: str | None = None
-    currency: str | None = None
-    total_amount: float | None = None
-    line_items: list[LineItem] = Field(default_factory=list)
+    invoice_no: Optional[str] = None
+    invoice_date: Optional[str] = None
+    vendor_id: Optional[str] = None
+    currency: Optional[str] = None
+    total_amount: Optional[float] = None
+    line_items: List[LineItem] = Field(default_factory=list)
     original_language: str = "en"
     translation_confidence: float = 1.0
 
 class ValidationResult(BaseModel):
     is_valid: bool = True
-    errors: list[str] = Field(default_factory=list)
-    missing_fields: list[str] = Field(default_factory=list)
-    discrepancies: list[str] = Field(default_factory=list)
+    errors: List[str] = Field(default_factory=list)
+    missing_fields: List[str] = Field(default_factory=list)
+    discrepancies: List[str] = Field(default_factory=list)
+    total_lines: int = 0
 
-class InvoiceState(TypedDict):
+class InvoiceState(BaseModel):
+    """
+    Global Core State for the Invoice Processing Workflow.
+    Replacing TypedDict with strict Pydantic Model.
+    """
     file_path: str
     file_name: str
-    metadata: dict[str, Any]
-    raw_text: str | None
-    extracted_data: dict[str, Any]
-    standardized_invoice: dict[str, Any] | None
-    validation_report: dict[str, Any] | None
-    current_step: str
-    status: ProcessingStatus
-    error: str | None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    
+    raw_text: Optional[str] = None
+    
+    # Structured Data
+    extracted_data: Dict[str, Any] = Field(default_factory=dict)
+    standardized_invoice: Optional[InvoiceData] = None
+    
+    # Reports
+    validation_report: Optional[ValidationResult] = None
+    validation_results: List[str] = Field(default_factory=list)
+    report_path: Optional[Dict[str, str]] = None
+    
+    current_step: str = "start"
+    status: ProcessingStatus = ProcessingStatus.PENDING
+    error: Optional[str] = None
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
