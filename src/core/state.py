@@ -5,15 +5,48 @@ from pydantic import BaseModel, Field, ConfigDict
 
 # Helper for frontend visualization
 def update_progress(file_name: str, step: str, status: str = "processing"):
+    from pathlib import Path
+    import time
+    import shutil
+    
+    # Use absolute path relative to project root
+    # Use CWD (Safe since we run from run.ps1 in root)
     try:
-        with open("data/status.json", "w") as f:
-            json.dump({
-                "current_file": file_name,
-                "step": step,
-                "status": status,
-                "timestamp": __import__("time").time()
-            }, f)
-    except Exception:
+        project_root = Path.cwd()
+        status_path = project_root / "data" / "status.json"
+        
+        # fallback if CWD is wrong (e.g. inside src?)
+        if not (project_root / "run.ps1").exists():
+             # Fallback to file traversal if not in root
+             project_root = Path(__file__).resolve().parent.parent.parent
+             status_path = project_root / "data" / "status.json"
+
+        temp_path = project_root / "data" / "status.tmp"
+        
+        status_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        data = {
+            "current_file": file_name,
+            "step": step,
+            "status": status,
+            "timestamp": time.time()
+        }
+        
+        # Retry logic for Windows file locking
+        for attempt in range(3):
+            try:
+                # Write to temp file first (Atomic Write Pattern)
+                with open(temp_path, "w") as f:
+                    json.dump(data, f)
+                
+                # Rename temp to actual (Atomic on POSIX, reduced risk on Windows)
+                shutil.move(str(temp_path), str(status_path))
+                break
+            except Exception:
+                time.sleep(0.1 * (attempt + 1))
+                
+    except Exception as e:
+        print(f"DEBUG: Status Update Critical Fail: {e}")
         pass
 
 class ProcessingStatus(str, Enum):

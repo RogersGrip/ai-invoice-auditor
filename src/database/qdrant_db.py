@@ -86,10 +86,28 @@ class VectorDB:
         
         client = self._get_client()
         try:
-            client.upsert(
-                collection_name=self.collection_name,
-                points=[point]
-            )
+            try:
+                client.upsert(
+                    collection_name=self.collection_name,
+                    points=[point]
+                )
+            except Exception as e:
+                # If collection missing, try to init and retry once
+                if "not found" in str(e).lower() or "not exist" in str(e).lower():
+                    logger.warning(f"Collection '{self.collection_name}' missing. Attempting to create.")
+                    self._init_db()
+                    
+                    # Re-open client as _init_db closes its own
+                    # But we are in a finally block... wait.
+                    # _init_db uses its own context.
+                    # The current 'client' is still open.
+                    
+                    client.upsert(
+                        collection_name=self.collection_name,
+                        points=[point]
+                    )
+                else:
+                    raise e
         finally:
             client.close()
             

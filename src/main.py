@@ -118,6 +118,10 @@ def main():
                      
                 except Exception as e:
                     logger.error(f"Workflow Critical Fail: {e}")
+                    
+                    # Force Update UI to Failed
+                    from src.core.state import update_progress
+                    update_progress(processed_name, "Failed", f"Error: {e}")
                 
                 # 5. Archive (Pass the same processed_name)
                 monitor.archive(file_path, dest_name=processed_name)

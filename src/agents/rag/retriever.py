@@ -10,7 +10,6 @@ class RetrievalAgent(Agent):
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
         query = inputs.get("query")
         filename = inputs.get("filename") # Optional filtering
-        
         if not query:
              return AgentResponse(content=[], metadata={"error": "No query provided"})
 
@@ -18,7 +17,8 @@ class RetrievalAgent(Agent):
         
         # Initial Retrieval (Top-K)
         try:
-            results = vector_store.search(query, limit=5, filename=filename)
+            # Increased limit to 15 to handle duplicates/versions
+            results = vector_store.search(query, limit=15, filename=filename)
         except Exception as e:
             logger.error(f"Retrieval Error: {e}")
             results = []

@@ -72,33 +72,46 @@ with tab1:
                 current_status = json.load(f)
             
             # Check if status is stale (> 2 minutes old)
-            import time
-            last_update = current_status.get("timestamp", 0)
-            if time.time() - last_update > 120:
-                 st.info("System is ready. (Last run finished)")
-            else:
-                # Determine active step index
-                steps = ["Extraction", "Translation", "Validation", "Reporting", "Ingestion", "Completed"]
-                current_step = current_status.get("step", "Idle").capitalize()
-                
-                # Simple mapping
-                step_map = {
-                    "Extraction": 0, "Translation": 1, "Validation": 2, 
-                    "Reporting": 3, "Ingestion": 4, "Completed": 5
-                }
-                
-                active_idx = step_map.get(current_step, 0)
-                
-                # Progress Bar
-                st.progress((active_idx + 1) / len(steps))
-                
-                st.caption(f"Currently processing: **{current_status.get('current_file', 'Unknown')}**")
-                st.info(f"👉 **Step: {current_step}** - {current_status.get('status', '')}")
+            # User requested to keep status until new file is shown
+            # import time
+            # last_update = current_status.get("timestamp", 0)
+            # if time.time() - last_update > 120:
+            #      st.info("System is ready. (Last run finished)")
+            # else:
             
-        except Exception:
+            # Determine active step index
+            steps = ["Extraction", "Translation", "Validation", "Reporting", "Ingestion", "Completed"]
+            current_step = current_status.get("step", "Idle").capitalize()
+            
+            # Simple mapping
+            step_map = {
+                "Extraction": 0, "Translation": 1, "Validation": 2, 
+                "Reporting": 3, "Ingestion": 4, "Completed": 5
+            }
+            
+            active_idx = step_map.get(current_step, 0)
+            
+            # Progress Bar
+            st.progress((active_idx + 1) / len(steps))
+            
+            st.caption(f"Currently processing: **{current_status.get('current_file', 'Unknown')}**")
+            st.info(f"👉 **Step: {current_step}** - {current_status.get('status', '')}")
+            
+        except Exception as e:
+            st.error(f"Error reading status: {e}")
             st.warning("Waiting for updates...")
+            
     else:
         st.info("System is ready. Upload a file to see live progress.")
+        
+    # Debug Info
+    with st.expander("🛠️ Debug Status Info"):
+        st.write(f"Looking for status at: `{status_file.absolute()}`")
+        if status_file.exists():
+            with open(status_file, "r") as f:
+                st.code(f.read(), language="json")
+        else:
+            st.write("Status file does not exist.")
 
     st.divider()
 
@@ -156,6 +169,7 @@ with tab2:
         html_reports = []
     
     if html_reports:
+        # 1. SELECT instead of iterating all
         selected_file = st.selectbox("Select Report to View", [r.name for r in html_reports])
         
         if selected_file:
@@ -177,31 +191,32 @@ with tab2:
 
             with view_tab2:
                 st.subheader("Downloads")
+                st.caption("Select a file above to enable downloads.")
                 
-                # Wrap in expander to prevent auto-trigger/prefetch issues
-                with st.expander("📂 Open Download Options"):
-                    c1, c2 = st.columns(2)
-                    
-                    if pdf_path.exists() and json_path.exists():
-                        with open(pdf_path, "rb") as f:
-                            pdf_data = f.read()
-                        c1.download_button(
-                            label="📄 Download PDF", 
-                            data=pdf_data, 
-                            file_name=f"{base_name}.pdf", 
-                            mime="application/pdf",
-                            key=f"btn_pdf_{base_name}"
-                        )
-                    
-                        with open(json_path, "r", encoding="utf-8") as f:
-                            json_data = f.read().encode('utf-8')
-                        c2.download_button(
-                            label="📊 Download JSON", 
-                            data=json_data, 
-                            file_name=f"{base_name}.json", 
-                            mime="application/json",
-                            key=f"btn_json_{base_name}"
-                        )
+                # Single set of buttons for the SELECTED file only
+                c1, c2 = st.columns(2)
+                
+                if pdf_path.exists():
+                    with open(pdf_path, "rb") as f:
+                        pdf_data = f.read()
+                    c1.download_button(
+                        label="📄 Download PDF", 
+                        data=pdf_data, 
+                        file_name=f"{base_name}.pdf", 
+                        mime="application/pdf",
+                        key=f"btn_pdf_selected"
+                    )
+                
+                if json_path.exists():
+                    with open(json_path, "r", encoding="utf-8") as f:
+                        json_data = f.read().encode('utf-8')
+                    c2.download_button(
+                        label="📊 Download JSON", 
+                        data=json_data, 
+                        file_name=f"{base_name}.json", 
+                        mime="application/json",
+                        key=f"btn_json_selected"
+                    )
 
             with view_tab3:
                 if json_path.exists():
@@ -241,7 +256,40 @@ with tab3:
                     st.session_state.messages.append({"role": "assistant", "content": answer})
                     
                     with st.expander("Sources & Reflection"):
-                        st.json(response.get("evaluation", {}))
+                        # Parse and Format Metrics
+                        eval_data = response.get("evaluation", {})
+                        if isinstance(eval_data, str):
+                            try:
+                                # Start searching for the first '{' for JSON start
+                                start_index = eval_data.find('{')
+                                # Start searching for the last '}' for JSON end
+                                end_index = eval_data.rfind('}')
+                                
+                                if start_index != -1 and end_index != -1:
+                                    json_str = eval_data[start_index : end_index + 1]
+                                    eval_data = json.loads(json_str)
+                                else:
+                                    eval_data = {} # Or handle valid non-JSON string
+                            except json.JSONDecodeError:
+                                pass
+                        
+                        if isinstance(eval_data, dict) and "context_precision" in eval_data:
+                            # Create a nice metrics table
+                            metrics = {
+                                "Metric": ["Context Precision", "Context Recall", "Faithfulness", "Answer Relevance", "Entity Recall"],
+                                "Score": [
+                                    eval_data.get("context_precision", 0.0),
+                                    eval_data.get("context_recall", 0.0),
+                                    eval_data.get("faithfulness", 0.0),
+                                    eval_data.get("answer_relevance", 0.0),
+                                    eval_data.get("context_entity_recall", 0.0)
+                                ]
+                            }
+                            st.table(metrics)
+                            st.write(f"**Reasoning:** {eval_data.get('reasoning', 'N/A')}")
+                        else:
+                            st.json(eval_data)
+
                         st.markdown("**Context Used:**")
                         
                         # Handle context being a list or string
