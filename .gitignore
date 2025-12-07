@@ -6,6 +6,7 @@ processed/
 collect.py
 combined_files.txt
 outputs/
+.pycache/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
