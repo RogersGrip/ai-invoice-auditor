@@ -5,8 +5,8 @@ from pydantic import BaseModel, Field
 from src.core.mock_data_loader import mock_db
 from src.core.logger import logger
 
-# Initialize FastMCP Server
-mcp = FastMCP("Mock ERP Agent", dependencies=["pydantic"])
+# Initialize FastMCP Server without 'dependencies' to fix DeprecationWarning
+mcp = FastMCP("Mock ERP Agent")
 
 class ValidationResult(BaseModel):
     status: str = Field(..., description="'match', 'mismatch', or 'warning'")
@@ -45,7 +45,6 @@ def validate_line_item(item_code: str, unit_price: float, currency: str = "USD")
     pos = mock_db.load_po_records()
     found_price = None
     
-    # Simple logic: Find the first occurrence of this SKU in any PO to get 'Standard Price'
     for po in pos:
         for line in po.get("line_items", []):
             if line.get("item_code") == item_code:
@@ -60,7 +59,6 @@ def validate_line_item(item_code: str, unit_price: float, currency: str = "USD")
             reason=f"SKU {item_code} found, but no historical PO price data."
         ).model_dump()
 
-    # Tolerance Check
     difference = abs(unit_price - found_price)
     percent_diff = (difference / found_price) * 100 if found_price > 0 else 100.0
 

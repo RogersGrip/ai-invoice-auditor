@@ -3,6 +3,9 @@ from enum import Enum
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime, timezone
+from abc import ABC, abstractmethod
+
+# --- A2A Enums ---
 
 class TaskState(str, Enum):
     UNSPECIFIED = "unspecified"
@@ -19,6 +22,8 @@ class Role(str, Enum):
     UNSPECIFIED = "unspecified"
     USER = "user"
     AGENT = "agent"
+
+# --- Core A2A Objects ---
 
 class FilePart(BaseModel):
     mediaType: str = Field(..., description="MIME type of the file")
@@ -64,6 +69,8 @@ class Task(BaseModel):
     history: Optional[List[Message]] = None
     metadata: Optional[Dict[str, Any]] = None
 
+# --- Operations Objects ---
+
 class SendMessageConfiguration(BaseModel):
     acceptedOutputModes: Optional[List[str]] = None
     blocking: bool = False
@@ -77,6 +84,8 @@ class SendMessageRequest(BaseModel):
 class SendMessageResponse(BaseModel):
     task: Optional[Task] = None
     message: Optional[Message] = None
+
+# --- Agent Discovery (Agent Card) ---
 
 class AgentProvider(BaseModel):
     organization: str
@@ -115,6 +124,28 @@ class AgentCard(BaseModel):
     
     model_config = ConfigDict(populate_by_name=True)
 
+# --- MCP Protocol Basics ---
+
+class MCPTool(BaseModel):
+    name: str
+    description: str
+    input_schema: Dict[str, Any]
+
+class MCPResource(BaseModel):
+    uri: str
+    name: str
+    mime_type: Optional[str] = None
+
+class MCPClient(ABC):
+    """Abstract Base Class for MCP Clients"""
+    @abstractmethod
+    def list_tools(self) -> List[MCPTool]: pass
+    
+    @abstractmethod
+    def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any: pass
+
+# --- Abstract Agent ---
+
 class AgentResponse(BaseModel):
     id: str
     timestamp: str
@@ -123,8 +154,6 @@ class AgentResponse(BaseModel):
     message_type: str
     payload: Dict[str, Any]
     context_id: Optional[str] = None
-
-from abc import ABC, abstractmethod
 
 class Agent(ABC):
     @property

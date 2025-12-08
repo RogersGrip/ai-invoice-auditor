@@ -1,32 +1,13 @@
 from typing import Dict, Any
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from src.core.protocol import Agent, AgentResponse
 from src.core.logger import logger
 from src.tools.tools import DataCompletenessCheckerTool
 
 class DataValidationAgent(Agent):
     name = "Data Validation Agent"
-    description = "Checks for missing mandatory fields and data types."
-
-    @property
-    def inputs_schema(self) -> Dict[str, Any]:
-        return {
-             "type": "object",
-             "properties": {
-                 "extracted_data": {"type": "object"}
-             }
-        }
-
-    @property
-    def outputs_schema(self) -> Dict[str, Any]:
-        return {
-             "type": "object",
-             "properties": {
-                 "validation_status": {"type": "string"},
-                 "missing_fields": {"type": "array"}
-             }
-        }
+    description = "Checks for missing mandatory fields."
 
     def __init__(self):
         self.checker_tool = DataCompletenessCheckerTool()
@@ -34,58 +15,41 @@ class DataValidationAgent(Agent):
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
         self.start_as_current_observation(inputs)
         
-        data = inputs.get("extracted_data")
-        if not data and inputs.get("payload"):
-             data = inputs["payload"].get("extracted_data")
-             
-        # Normalize
-        if hasattr(data, "model_dump"):
-            data = data.model_dump()
-
-        if not data:
-             return AgentResponse(
-                 id=str(uuid.uuid4()),
-                 source_agent=self.name,
-                 timestamp=datetime.now().isoformat(),
-                 target_agent="Error Handler",
-                 message_type="ERROR",
-                 payload={"error": "No data to validate"},
-                 context_id=inputs.get("context_id")
-             )
-             
-        logger.info(f"[{self.name}] Calling DataCompletenessChecker Tool...")
+        data = inputs.get("extracted_data") or inputs.get("payload", {}).get("extracted_data")
         
-        try:
-            result = self.checker_tool.run(data)
-            
-            is_valid = result["is_valid"]
-            missing = result["missing_fields"]
-            
-            if not is_valid:
-                logger.warning(f"Validation Issues: {missing}")
-                
+        if not data:
             return AgentResponse(
                 id=str(uuid.uuid4()),
-                timestamp=datetime.now().isoformat(),
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                source_agent=self.name,
+                target_agent="Error",
+                message_type="ERROR",
+                payload={"error": "No data"}
+            )
+
+        logger.info(f"[{self.name}] Validating completeness...")
+        try:
+            result = self.checker_tool.run(data)
+            return AgentResponse(
+                id=str(uuid.uuid4()),
+                timestamp=datetime.now(timezone.utc).isoformat(),
                 source_agent=self.name,
                 target_agent="Business Validation Agent",
                 message_type="TASK_HANDOFF",
                 payload={
-                    "extracted_data": data,
-                    "validation_status": "valid" if is_valid else "invalid", 
-                    "missing_fields": missing,
-                    "errors": missing
+                    "validated_data": data,
+                    "validation_status": result.get("validation_status"),
+                    "missing_fields": result.get("missing_fields", [])
                 },
                 context_id=inputs.get("context_id")
             )
         except Exception as e:
-            logger.error(f"Validation Failed: {e}")
+            logger.error(f"Validation Error: {e}")
             return AgentResponse(
-                 id=str(uuid.uuid4()),
-                 source_agent=self.name,
-                 timestamp=datetime.now().isoformat(),
-                 target_agent="Error Handler",
-                 message_type="ERROR",
-                 payload={"error": str(e)},
-                 context_id=inputs.get("context_id")
+                id=str(uuid.uuid4()),
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                source_agent=self.name,
+                target_agent="Error",
+                message_type="ERROR",
+                payload={"error": str(e)}
             )

@@ -1,8 +1,8 @@
 import re
 import json
 import uuid
-from datetime import datetime
-from typing import Dict, Any, List, Tuple
+from datetime import datetime, timezone
+from typing import Dict, Any, List
 from pydantic import BaseModel, Field
 
 from langchain_aws import ChatBedrockConverse
@@ -41,7 +41,7 @@ class SafetyAgent(Agent):
             logger.warning(f"Failed to init Bedrock LLM: {e}. Safety checks will run in fallback mode.")
             self.llm = None
 
-    def _redact_pii(self, text: str) -> Tuple[str, List[str]]:
+    def _redact_pii(self, text: str) -> tuple[str, List[str]]:
         detected_types = set()
         redacted_text = text
         
@@ -57,25 +57,36 @@ class SafetyAgent(Agent):
         if not self.llm:
             return ToxicityAnalysis(toxicity_score=0.0, is_biased=False, reasoning="LLM unavailable")
 
+        # Robust prompt for direct JSON
         prompt = f"""
-        Analyze the following invoice text for toxicity, hate speech, and bias.
-        Ignore financial terms, names, and addresses unless they are explicitly abusive.
+        Analyze the text below for toxicity, hate speech, and bias.
+        Return a valid JSON object with:
+        - "toxicity_score": float (0.0 = safe, 1.0 = toxic)
+        - "is_biased": boolean
+        - "reasoning": string (brief explanation)
+
+        Text to analyze:
+        {text[:2000]}...
         
-        TEXT:
-        {text[:2000]}... (truncated)
-        
-        Return JSON with:
-        - toxicity_score (float 0.0-1.0)
-        - is_biased (bool)
-        - reasoning (string)
+        JSON OUTPUT:
         """
         
         try:
-            structured_llm = self.llm.with_structured_output(ToxicityAnalysis)
-            return structured_llm.invoke([HumanMessage(content=prompt)])
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            content = response.content.strip()
+            
+            # Extract JSON
+            match = re.search(r"\{.*\}", content, re.DOTALL)
+            if match:
+                json_str = match.group(0)
+                data = json.loads(json_str)
+                return ToxicityAnalysis(**data)
+            else:
+                raise ValueError("No JSON found in response")
+
         except Exception as e:
             logger.error(f"Toxicity check failed: {e}")
-            return ToxicityAnalysis(toxicity_score=0.0, is_biased=False, reasoning="Check failed")
+            return ToxicityAnalysis(toxicity_score=0.0, is_biased=False, reasoning="Check failed or parsing error")
 
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
         self.start_as_current_observation(inputs)
@@ -84,13 +95,20 @@ class SafetyAgent(Agent):
         file_name = inputs.get("file_name", "unknown")
         
         if not raw_text:
+            # Handle empty text gracefully
+            report = SafetyReport(is_safe=True, details="No text content.")
             return AgentResponse(
                 id=str(uuid.uuid4()),
-                timestamp=datetime.utcnow().isoformat(),
+                timestamp=datetime.now(timezone.utc).isoformat(),
                 source_agent=self.name,
-                target_agent="Orchestrator",
-                message_type="ERROR",
-                payload={"error": "No text to analyze"}
+                target_agent="Translation Agent",
+                message_type="TASK_HANDOFF",
+                payload={
+                    "safety_report": report.model_dump(),
+                    "redacted_text": "",
+                    "status": "safe"
+                },
+                context_id=inputs.get("context_id")
             )
 
         logger.info(f"Running Safety Checks for {file_name}...")
@@ -115,7 +133,7 @@ class SafetyAgent(Agent):
 
         return AgentResponse(
             id=str(uuid.uuid4()),
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             source_agent=self.name,
             target_agent="Translation Agent",
             message_type="TASK_HANDOFF",
@@ -123,5 +141,6 @@ class SafetyAgent(Agent):
                 "safety_report": report.model_dump(),
                 "redacted_text": redacted_text,
                 "status": "safe" if is_safe else "flagged"
-            }
+            },
+            context_id=inputs.get("context_id")
         )

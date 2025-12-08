@@ -1,52 +1,43 @@
 from typing import Literal, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pathlib import Path
 
 class Settings(BaseSettings):
-    # App Config
     APP_NAME: str = "AI Invoice Auditor"
-    VERSION: str = "0.1.0"
+    VERSION: str = "1.0.0"
     ENV: Literal["dev", "prod", "test"] = "dev"
     
-    # Model Configuration
-    MODEL_PROVIDER: Literal["bedrock", "ollama"] = "ollama"
+    # --- Model Configuration ---
+    # Defaulting to Bedrock/Cohere as requested
+    MODEL_PROVIDER: Literal["bedrock", "ollama"] = "bedrock"
     
-    # Bedrock / Generic LLM
+    # Model IDs (Cohere Command R+ on Bedrock)
     TRANSLATION_MODEL: str = "cohere.command-r-plus-v1:0"
     VALIDATION_MODEL: str = "cohere.command-r-plus-v1:0"
     REPORTING_MODEL: str = "cohere.command-r-plus-v1:0"
+    SAFETY_MODEL: str = "cohere.command-r-plus-v1:0"
+    
+    # Embeddings
     EMBEDDING_MODEL: str = "amazon.titan-embed-text-v1"
     
-    # Ollama Specific Overrides (Defaults)
+    # Ollama Fallbacks (Optional)
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "llama3:8b"
+    OLLAMA_MODEL: str = "llama3"
     OLLAMA_EMBEDDING_MODEL: str = "nomic-embed-text"
-    
-    # Dev Flags
-    USE_MOCK_DATA: bool = False
 
-    # Vector DB
-    QDRANT_PATH: str = "./data/qdrant_storage"
-    
-    # Paths
-    INVOICE_WATCH_DIR: str = "data/invoices"
-    PROCESSED_DIR: str = "data/processed"
-    OUTPUT_DIR: str = "outputs/reports"
+    # --- Paths ---
+    BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
+    DATA_DIR: Path = BASE_DIR / "data"
+    INVOICE_WATCH_DIR: Path = DATA_DIR / "invoices"
+    PROCESSED_DIR: Path = DATA_DIR / "processed"
+    OUTPUT_DIR: Path = BASE_DIR / "outputs" / "reports"
+    QDRANT_PATH: Path = DATA_DIR / "qdrant_storage"
+    LOG_DIR: Path = BASE_DIR / "logs"
 
-    # Langfuse
-    # Langfuse
+    # --- Observability ---
     LANGFUSE_PUBLIC_KEY: Optional[str] = None
     LANGFUSE_SECRET_KEY: Optional[str] = None
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
-    LANGFUSE_HOST: str = "https://cloud.langfuse.com"
-
-    @property
-    def DATA_DIR(self):
-        from pathlib import Path
-        # Assuming QDRANT_PATH relative to root or similar.
-        # Let's base it on file location of config.py -> ../../..
-        # Or better, just use absolute path of "data" current working dir if reliable
-        # But safest is relative to this file
-        return Path(__file__).resolve().parent.parent.parent / "data"
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -55,3 +46,8 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+
+# Ensure directories exist
+settings.LOG_DIR.mkdir(parents=True, exist_ok=True)
+settings.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+settings.DATA_DIR.mkdir(parents=True, exist_ok=True)

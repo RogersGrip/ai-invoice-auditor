@@ -5,43 +5,40 @@ if [ -d ".venv" ]; then
     source .venv/bin/activate
 fi
 
-# CLEANUP: Aggressively remove all local __pycache__ and .cache folders
-echo "Cleaning up scattered __pycache__ and .cache..."
+# Cleanup
+echo "Cleaning up..."
 find . -type d \( -name "__pycache__" -o -name ".cache" \) -exec rm -rf {} + 2>/dev/null
+# Clean old DBs
+rm -f data/checkpoints.sqlite*
+mkdir -p data/invoices data/processed data/qdrant_storage outputs/reports logs
 
-# Centralize Pycache
-export PYTHONPYCACHEPREFIX="$(pwd)/.pycache"
-mkdir -p "$PYTHONPYCACHEPREFIX"
-echo "Pycache centralized at: $PYTHONPYCACHEPREFIX"
-
-# Create directories
-mkdir -p data/invoices data/processed outputs/reports logs
+# Dependencies check
+if command -v uv &> /dev/null; then
+    uv pip install fastapi uvicorn pydantic requests streamlit langchain-aws ragas fpdf qdrant-client loguru litellm > /dev/null 2>&1
+fi
 
 # Colors
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-GRAY='\033[0;90m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Start Backend in background
-echo -e "${CYAN}Starting Backend Agent...${NC}"
-python -m src.main &
+echo -e "${CYAN}Starting A2A Backend Server (Port 8000)...${NC}"
+python src/server.py &
 BACKEND_PID=$!
 
-# Cleanup function
 cleanup() {
-    echo -e "${YELLOW}Stopping Backend (PID: $BACKEND_PID)...${NC}"
-    kill $BACKEND_PID
+    echo -e "\n${YELLOW}Shutting down...${NC}"
+    kill $BACKEND_PID 2>/dev/null
     exit
 }
 
-# Trap SIGINT and SIGTERM
 trap cleanup SIGINT SIGTERM
 
-# Start Frontend
-echo -e "${GREEN}Launching Dashboard...${NC}"
-streamlit run src/frontend/app.py
+sleep 2
 
-# Ensure cleanup if streamlit exits normally
+echo -e "${GREEN}Launching Dashboard (Port 8501)...${NC}"
+# Use foreground process to handle Ctrl+C cleanly
+streamlit run src/frontend/app.py --server.headless false
+
 cleanup
