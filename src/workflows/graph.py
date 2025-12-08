@@ -1,50 +1,45 @@
-from typing import TypedDict, List, Dict, Any, Union, Literal
+import sqlite3
+from typing import Literal
 from langgraph.graph import StateGraph, END
 from langfuse import observe
-from src.core.state import InvoiceState, ProcessingStatus, update_progress
+
+from src.core.state import InvoiceState, ProcessingStatus, update_progress, SafetyReport
 from src.core.logger import logger
 from src.core.protocol import AgentResponse
+from src.core.config import settings
 
-# Import Agents (New Structure)
+# Agents
 from src.langgraph_agents.extractor_agent import ExtractorAgent
+from src.langgraph_agents.safety_agent import SafetyAgent
 from src.adk_agents.translation_agent import TranslationAgent
 from src.adk_agents.validation_agent import DataValidationAgent
 from src.adk_agents.business_validator_agent import BusinessValidationAgent
 from src.adk_agents.reporting_agent import ReportingAgent
 from src.langgraph_agents.rag.indexer import IndexingAgent
 
-# Initialize Agents
 extractor = ExtractorAgent()
+safety = SafetyAgent()
 translator = TranslationAgent()
 validator = DataValidationAgent()
 biz_validator = BusinessValidationAgent()
 reporter = ReportingAgent()
 indexer = IndexingAgent()
 
-# --- Node Functions ---
-# Each node wraps an agent's process() method and maps A2A response to State
-
 @observe(name="extraction_node")
 def extraction_node(state: InvoiceState) -> InvoiceState:
     update_progress(state.file_name, "Extraction", "Extracting text and data...")
     try:
-        # A2A Protocol: Call process with inputs dict
         resp: AgentResponse = extractor.process({
-            "file_path": state.file_path, 
-            "context_id": state.file_name,
+            "file_path": state.file_path,
+            "file_name": state.file_name,
             "metadata": state.metadata
         })
-        
         if resp.message_type == "ERROR":
             raise Exception(resp.payload.get("error"))
-            
-        payload = resp.payload
-        # Depending on AgentResponse payload structure from ExtractorAgent
-        state.raw_text = payload.get("raw_text")
-        # Metadata merge
-        if payload.get("metadata"):
-            state.metadata.update(payload.get("metadata"))
         
+        state.raw_text = resp.payload.get("raw_text")
+        if resp.payload.get("metadata"):
+            state.metadata.update(resp.payload.get("metadata"))
         return state
     except Exception as e:
         logger.error(f"Extraction Failed: {e}")
@@ -52,25 +47,50 @@ def extraction_node(state: InvoiceState) -> InvoiceState:
         state.error_log.append(f"Extraction Error: {str(e)}")
         return state
 
+@observe(name="safety_node")
+def safety_node(state: InvoiceState) -> InvoiceState:
+    if state.status == ProcessingStatus.FAILED: return state
+    update_progress(state.file_name, "Safety Check", "Scanning for PII & Toxicity...")
+    
+    try:
+        resp: AgentResponse = safety.process({
+            "raw_text": state.raw_text,
+            "file_name": state.file_name
+        })
+        
+        payload = resp.payload
+        state.redacted_text = payload.get("redacted_text")
+        state.safety_report = SafetyReport(**payload.get("safety_report", {}))
+        
+        if not state.safety_report.is_safe:
+            logger.warning(f"Safety Violation in {state.file_name}: {state.safety_report.details}")
+            state.status = ProcessingStatus.FLAGGED
+        
+        return state
+    except Exception as e:
+        logger.error(f"Safety Check Failed: {e}")
+        state.status = ProcessingStatus.FAILED
+        state.error_log.append(f"Safety Error: {str(e)}")
+        return state
+
 @observe(name="translation_node")
 def translation_node(state: InvoiceState) -> InvoiceState:
     if state.status == ProcessingStatus.FAILED: return state
-    update_progress(state.file_name, "Translation", "Standardizing to JSON...")
     
+    # Use redacted text if available
+    text_to_process = state.redacted_text if state.redacted_text else state.raw_text
+    
+    update_progress(state.file_name, "Translation", "Standardizing to JSON...")
     try:
         resp: AgentResponse = translator.process({
-            "raw_text": state.raw_text,
-            "context_id": state.file_name
+            "raw_text": text_to_process,
+            "file_name": state.file_name
         })
-        
         if resp.message_type == "ERROR":
             raise Exception(resp.payload.get("error"))
             
-        payload = resp.payload
-        # Translator returns 'extracted_data' (dict) and 'english_text' etc
-        state.extracted_data = payload.get("extracted_data")
-        state.translation_meta = {"model": payload.get("model")}
-        
+        state.extracted_data = resp.payload.get("extracted_data")
+        state.translation_meta = {"model": resp.payload.get("model")}
         return state
     except Exception as e:
         logger.error(f"Translation Failed: {e}")
@@ -82,22 +102,16 @@ def translation_node(state: InvoiceState) -> InvoiceState:
 def validation_node(state: InvoiceState) -> InvoiceState:
     if state.status == ProcessingStatus.FAILED: return state
     update_progress(state.file_name, "Validation", "Checking completeness...")
-    
     try:
         resp: AgentResponse = validator.process({
             "extracted_data": state.extracted_data,
-            "context_id": state.file_name
+            "file_name": state.file_name
         })
-        
-        if resp.message_type == "ERROR":
-             raise Exception(resp.payload.get("error"))
-
         payload = resp.payload
         state.validation_results = {
             "is_valid": payload.get("validation_status") == "valid",
             "missing_fields": payload.get("missing_fields", [])
         }
-        
         return state
     except Exception as e:
         logger.error(f"Validation Failed: {e}")
@@ -109,34 +123,22 @@ def validation_node(state: InvoiceState) -> InvoiceState:
 def business_validation_node(state: InvoiceState) -> InvoiceState:
     if state.status == ProcessingStatus.FAILED: return state
     update_progress(state.file_name, "Business Validation", "Cross-referencing with ERP...")
-    
     try:
-        # Note: Business Validator expects 'extracted_data' in inputs or payload
-        # And it returns 'validated_data', 'business_validation_status', 'discrepancies'
         resp: AgentResponse = biz_validator.process({
             "extracted_data": state.extracted_data,
-            "context_id": state.file_name
+            "file_name": state.file_name
         })
-        
-        if resp.message_type == "ERROR":
-             raise Exception(resp.payload.get("error"))
-
         payload = resp.payload
-        state.extracted_data = payload.get("validated_data", state.extracted_data) # Might be enriched
-        
-        # Merge business status into validation_results
         state.validation_results["business_status"] = payload.get("business_validation_status")
         state.validation_results["discrepancies"] = payload.get("discrepancies", [])
         
-        # Consolidate Logic for overall validity
         if payload.get("discrepancies") or not state.validation_results.get("is_valid"):
-             state.validation_results["is_valid"] = False
-        # If it was valid before and no discrepancies, it remains valid (True)
-             
+            state.validation_results["is_valid"] = False
+            
         return state
     except Exception as e:
         logger.error(f"Business Validation Failed: {e}")
-        state.error_log.append(f"Business Validation Warning/Error: {str(e)}")
+        state.error_log.append(f"Business Validation Warning: {str(e)}")
         state.validation_results["business_status"] = "error"
         return state
 
@@ -144,25 +146,22 @@ def business_validation_node(state: InvoiceState) -> InvoiceState:
 def reporting_node(state: InvoiceState) -> InvoiceState:
     if state.status == ProcessingStatus.FAILED: return state
     update_progress(state.file_name, "Reporting", "Generating reports...")
-    
     try:
         resp: AgentResponse = reporter.process({
             "file_name": state.file_name,
             "extracted_data": state.extracted_data,
-            "validation_report": state.validation_results,
-            "overall_status": state.status, # Should be PENDING/PROCESSING still
+            "validation_results": state.validation_results,
+            "safety_report": state.safety_report.model_dump() if state.safety_report else None,
+            "status": state.status,
             "metadata": state.metadata,
-            "file_path": state.file_path,
-            "context_id": state.file_name
+            "file_path": state.file_path
         })
         
-        if resp.message_type == "ERROR":
-             raise Exception(resp.payload.get("error"))
-             
-        # Done
-        state.status = ProcessingStatus.COMPLETED
+        if state.status != ProcessingStatus.FLAGGED:
+            state.status = ProcessingStatus.COMPLETED
+            
+        state.report_path = resp.payload
         return state
-        
     except Exception as e:
         logger.error(f"Reporting Failed: {e}")
         state.status = ProcessingStatus.FAILED
@@ -171,66 +170,43 @@ def reporting_node(state: InvoiceState) -> InvoiceState:
 
 @observe(name="ingestion_node")
 def ingestion_node(state: InvoiceState) -> InvoiceState:
-    # Optional Side Effect: Verify if Indexing is needed here or implicitly handled
     if state.status == ProcessingStatus.FAILED: return state
     update_progress(state.file_name, "Ingestion", "Indexing to Vector DB...")
-    
     try:
-        if state.raw_text or state.extracted_data:
-            # Construct a rich text representation for better RAG retrieval
-            import json
-            
-            structured_summary = ""
-            if state.extracted_data:
-                try:
-                    # Create a clean YAML-like or JSON summary
-                    # JSON is token-heavy but precise. YAML-like is better for LLM reading.
-                    # Let's use formatted JSON for reliability.
-                    structured_summary = f"[STRUCTURED DATA]\n{json.dumps(state.extracted_data, indent=2, default=str)}\n\n"
-                except Exception as je:
-                    logger.warning(f"Failed to serialize extracted data for indexing: {je}")
-            
-            raw_content = f"[RAW CONTENT]\n{state.raw_text}" if state.raw_text else ""
-            
-            full_text_to_index = f"{structured_summary}{raw_content}"
-            
-            resp: AgentResponse = indexer.process({
-                "text": full_text_to_index,
-                "filename": state.file_name,
-                "metadata": state.metadata,
-                "context_id": state.file_name
-            })
-            
+        text_content = state.redacted_text or state.raw_text or ""
+        struct_data = f"\n[STRUCTURED_DATA]\n{state.extracted_data}"
+        
+        indexer.process({
+            "text": text_content + struct_data,
+            "filename": state.file_name,
+            "metadata": state.metadata
+        })
     except Exception as e:
         logger.warning(f"Ingestion Failed (Non-blocking): {e}")
-        
-    # Finalize Progress
-    update_progress(state.file_name, "Completed", "Processed successfully.")
+    
+    final_msg = "Completed." if state.status == ProcessingStatus.COMPLETED else "Completed with Flags."
+    update_progress(state.file_name, "Completed", final_msg)
     return state
 
-# --- Conditionals ---
+def route_after_extraction(state: InvoiceState) -> Literal["safety", "reporting"]:
+    if state.status == ProcessingStatus.FAILED:
+        return "reporting"
+    return "safety"
 
-def route_after_extraction(state: InvoiceState) -> Literal["translation", "reporting"]:
+def route_after_safety(state: InvoiceState) -> Literal["translation", "reporting"]:
+    # Even if flagged, we might want to report it immediately or continue cautiously
+    # For this sprint: if unsafe, we go to reporting to generate the 'Flagged' report
+    if state.status == ProcessingStatus.FLAGGED:
+        return "reporting"
     if state.status == ProcessingStatus.FAILED:
         return "reporting"
     return "translation"
 
-def route_after_data_validation(state: InvoiceState) -> Literal["business_validation", "reporting"]:
-    # If basic validation fails, we might still want business validation or skip it?
-    # Logic: If invalid structure, business validation might crash.
-    if not state.validation_results.get("is_valid"):
-        # For now, let's skip business validation if data is missing critical fields
-        # But we still want reporting
-        # AGENTS.md workflow implies sequential.
-        # Let's try to proceed unless critical failure.
-        pass
-    return "business_validation"
-
-# --- Graph Definition ---
 def create_invoice_graph():
     workflow = StateGraph(InvoiceState)
     
     workflow.add_node("extraction", extraction_node)
+    workflow.add_node("safety", safety_node)
     workflow.add_node("translation", translation_node)
     workflow.add_node("validation", validation_node)
     workflow.add_node("business_validation", business_validation_node)
@@ -242,43 +218,25 @@ def create_invoice_graph():
     workflow.add_conditional_edges(
         "extraction",
         route_after_extraction,
-        {
-            "translation": "translation",
-            "reporting": "reporting" # If failed, go straight to report (generating error report if implemented)
-        }
+        {"safety": "safety", "reporting": "reporting"}
+    )
+    
+    workflow.add_conditional_edges(
+        "safety",
+        route_after_safety,
+        {"translation": "translation", "reporting": "reporting"}
     )
     
     workflow.add_edge("translation", "validation")
     workflow.add_edge("validation", "business_validation")
     workflow.add_edge("business_validation", "reporting")
-    
-    # Ingestion after reporting
     workflow.add_edge("reporting", "ingestion")
     workflow.add_edge("ingestion", END)
     
-    
-    # 3. Checkpointing for HITL
+    # Checkpointer Setup
     from langgraph.checkpoint.sqlite import SqliteSaver
-    import sqlite3
-    
-    # Use a persistent SQLite DB so main.py and app.py can share state
-    # and resume interrupted workflows.
-    from src.core.config import settings
     db_path = str(settings.DATA_DIR / "checkpoints.sqlite")
     conn = sqlite3.connect(db_path, check_same_thread=False)
     checkpointer = SqliteSaver(conn)
     
-    # DEBUG: List existing checkpoints to debug "Finished" / "No input" error
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id DESC LIMIT 10")
-        rows = cursor.fetchall()
-        logger.info(f"DEBUG: Found Checkpoints for threads: {[r[0] for r in rows]}")
-    except Exception as e:
-        logger.warning(f"DEBUG: Could not list checkpoints: {e}")
-
-    # Interrupt before INGESTION to allow review of generated reports
-    return workflow.compile(
-        checkpointer=checkpointer,
-        interrupt_before=["ingestion"]
-    )
+    return workflow.compile(checkpointer=checkpointer)
