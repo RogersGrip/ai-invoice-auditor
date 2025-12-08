@@ -1,104 +1,141 @@
-from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from __future__ import annotations
+from enum import Enum
+from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field, ConfigDict
+from datetime import datetime, timezone
 
-# --- A2A Protocol ---
+class TaskState(str, Enum):
+    UNSPECIFIED = "unspecified"
+    SUBMITTED = "submitted"
+    WORKING = "working"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    INPUT_REQUIRED = "input-required"
+    REJECTED = "rejected"
+    AUTH_REQUIRED = "auth-required"
 
-class AgentTool(BaseModel):
+class Role(str, Enum):
+    UNSPECIFIED = "unspecified"
+    USER = "user"
+    AGENT = "agent"
+
+class FilePart(BaseModel):
+    mediaType: str = Field(..., description="MIME type of the file")
+    name: str = Field(..., description="Name of the file")
+    fileWithUri: Optional[str] = None
+    fileWithBytes: Optional[str] = None
+
+class DataPart(BaseModel):
+    data: Dict[str, Any]
+
+class Part(BaseModel):
+    text: Optional[str] = None
+    file: Optional[FilePart] = None
+    data: Optional[DataPart] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class Message(BaseModel):
+    messageId: str = Field(..., description="Unique UUID for the message")
+    role: Role
+    parts: List[Part]
+    contextId: Optional[str] = None
+    taskId: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    referenceTaskIds: Optional[List[str]] = None
+
+class Artifact(BaseModel):
+    artifactId: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+    parts: List[Part]
+    metadata: Optional[Dict[str, Any]] = None
+
+class TaskStatus(BaseModel):
+    state: TaskState
+    message: Optional[Message] = None
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+class Task(BaseModel):
+    id: str
+    contextId: str
+    status: TaskStatus
+    artifacts: Optional[List[Artifact]] = None
+    history: Optional[List[Message]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class SendMessageConfiguration(BaseModel):
+    acceptedOutputModes: Optional[List[str]] = None
+    blocking: bool = False
+
+class SendMessageRequest(BaseModel):
+    tenant: Optional[str] = None
+    message: Message
+    configuration: Optional[SendMessageConfiguration] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class SendMessageResponse(BaseModel):
+    task: Optional[Task] = None
+    message: Optional[Message] = None
+
+class AgentProvider(BaseModel):
+    organization: str
+    url: str
+
+class AgentCapabilities(BaseModel):
+    streaming: bool = False
+    pushNotifications: bool = False
+    stateTransitionHistory: bool = False
+
+class AgentSkill(BaseModel):
+    id: str
     name: str
     description: str
-    args_schema: Optional[Dict[str, Any]] = None
+    tags: List[str]
+    inputModes: Optional[List[str]] = None
+    outputModes: Optional[List[str]] = None
+
+class AgentInterface(BaseModel):
+    url: str
+    protocolBinding: str
+    tenant: Optional[str] = None
+
+class AgentCard(BaseModel):
+    protocolVersion: str = "0.3.0"
+    name: str
+    description: str
+    version: str
+    provider: Optional[AgentProvider] = None
+    capabilities: AgentCapabilities
+    defaultInputModes: List[str]
+    defaultOutputModes: List[str]
+    skills: List[AgentSkill]
+    supportedInterfaces: Optional[List[AgentInterface]] = None
+    documentationUrl: Optional[str] = None
+    
+    model_config = ConfigDict(populate_by_name=True)
 
 class AgentResponse(BaseModel):
-    """
-    Standardized A2A Message Schema.
-    Follows:
-    {
-       "id": "uuid-v4",
-       "timestamp": "iso-8601",
-       "source_agent": "agent_name",
-       "target_agent": "agent_name",
-       "message_type": "TASK_HANDOFF | QUERY | RESPONSE | ERROR",
-       "payload": { ... },
-       "context_id": "trace_id_for_observability"
-    }
-    """
-    id: str = Field(..., description="UUID v4 for the message")
-    timestamp: str = Field(..., description="ISO 8601 timestamp")
+    id: str
+    timestamp: str
     source_agent: str
     target_agent: str
-    message_type: str = Field(..., pattern="^(TASK_HANDOFF|QUERY|RESPONSE|ERROR)$")
+    message_type: str
     payload: Dict[str, Any]
     context_id: Optional[str] = None
 
+from abc import ABC, abstractmethod
+
 class Agent(ABC):
-    """Abstract Base Class for all Agents adhering to A2A Protocol."""
+    @property
+    @abstractmethod
+    def name(self) -> str: pass
+    @property
+    @abstractmethod
+    def description(self) -> str: pass
+    @abstractmethod
+    def process(self, inputs: Dict[str, Any]) -> AgentResponse: pass
     
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        pass
-
-    @property
-    @abstractmethod
-    def description(self) -> str:
-        pass
-
-    @property
-    @abstractmethod
-    def inputs_schema(self) -> Dict[str, Any]:
-        """JSON Schema for expected inputs."""
-        pass
-
-    @property
-    @abstractmethod
-    def outputs_schema(self) -> Dict[str, Any]:
-        """JSON Schema for expected outputs."""
-        pass
-
-    @abstractmethod
-    def process(self, inputs: Dict[str, Any]) -> AgentResponse:
-        """Main execution entry point."""
-        pass
-
     def start_as_current_observation(self, inputs: Dict[str, Any]):
-        """
-        Standard logging/trace method for observability.
-        """
-        from loguru import logger
-        logger.info(f"[{self.name}] STARTING OBSERVATION with inputs: {list(inputs.keys())}")
-
-# --- MCP Protocol Interfaces ---
-
-class MCPTool(BaseModel):
-    name: str
-    description: str
-    input_schema: Dict[str, Any]
-    output_schema: Optional[Dict[str, Any]] = None
-
-class MCPResource(BaseModel):
-    uri: str
-    name: str
-    mime_type: Optional[str] = None
-
-class MCPClient(ABC):
-    """Interface for connecting to MCP Servers."""
-    
-    @abstractmethod
-    def list_tools(self) -> List[MCPTool]:
-        pass
-        
-    @abstractmethod
-    def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
-        pass
-
-class MCPServer(ABC):
-    """Interface for MCP Servers."""
-    
-    @abstractmethod
-    def register_tool(self, tool: MCPTool, fn: Any):
-        pass
-        
-    @abstractmethod
-    def register_resource(self, resource: MCPResource, fn: Any):
-        pass
+        from src.core.logger import logger
+        logger.info(f"[{self.name}] STARTING OBSERVATION inputs keys: {list(inputs.keys())}")

@@ -1,0 +1,35 @@
+{
+  "protocolVersion": "0.3.0",
+  "name": "AI Invoice Auditor Orchestrator",
+  "description": "Primary orchestrator for the invoice auditing workflow. Handles extraction, translation, and report generation.",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "Infosys",
+    "url": "https://www.infosys.com"
+  },
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": true,
+    "stateTransitionHistory": true
+  },
+  "defaultInputModes": ["application/pdf", "image/png", "image/jpeg"],
+  "defaultOutputModes": ["application/json", "application/pdf"],
+  "skills": [
+    {
+      "id": "invoice-processing",
+      "name": "Full Invoice Audit",
+      "description": "End-to-end processing of an invoice file: Extract -> Translate -> Validate -> Report.",
+      "tags": ["finance", "ocr", "audit"],
+      "inputModes": ["application/pdf", "image/png"],
+      "outputModes": ["application/json", "application/pdf"]
+    },
+    {
+      "id": "invoice-qa",
+      "name": "Invoice RAG Q&A",
+      "description": "Answer questions based on processed invoice data.",
+      "tags": ["rag", "qa"],
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/plain"]
+    }
+  ]
+}

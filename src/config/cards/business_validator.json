@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "0.3.0",
+  "name": "Business Validation Agent",
+  "description": "Specialized agent for cross-referencing extracted data against ERP systems.",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "NuvePro Lab",
+    "url": "https://nuvepro.example.com"
+  },
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "stateTransitionHistory": false
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "erp-validation",
+      "name": "ERP Line Item Check",
+      "description": "Validates line items against Purchase Orders and SKU masters.",
+      "tags": ["erp", "validation"],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"]
+    }
+  ]
+}
