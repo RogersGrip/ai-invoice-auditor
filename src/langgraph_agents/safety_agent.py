@@ -2,7 +2,7 @@ import re
 import json
 import uuid
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 from pydantic import BaseModel, Field
 
 from langchain_aws import ChatBedrockConverse
@@ -41,7 +41,7 @@ class SafetyAgent(Agent):
             logger.warning(f"Failed to init Bedrock LLM: {e}. Safety checks will run in fallback mode.")
             self.llm = None
 
-    def _redact_pii(self, text: str) -> (str, List[str]):
+    def _redact_pii(self, text: str) -> Tuple[str, List[str]]:
         detected_types = set()
         redacted_text = text
         

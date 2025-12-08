@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "0.3.0",
+  "name": "Invoice Monitor Agent",
+  "description": "Watchdog service that continuously monitors designated file systems or mailboxes for incoming invoice documents.",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "NuvePro Lab",
+    "url": "https://nuvepro.example.com"
+  },
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": true,
+    "stateTransitionHistory": true
+  },
+  "defaultInputModes": [],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "file-watcher",
+      "name": "File System Watcher",
+      "description": "Detects new files in the hot folder and initiates the processing workflow.",
+      "tags": ["monitor", "filesystem", "trigger"],
+      "inputModes": [],
+      "outputModes": ["application/json"]
+    }
+  ]
+}

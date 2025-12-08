@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "0.3.0",
+  "name": "Translation Agent",
+  "description": "Detects language and translates content to English while maintaining document structure and standardization.",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "NuvePro Lab",
+    "url": "https://nuvepro.example.com"
+  },
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "stateTransitionHistory": false
+  },
+  "defaultInputModes": ["text/plain"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "invoice-translation",
+      "name": "Invoice Standardization",
+      "description": "Translates non-English invoice text and maps it to the standard English schema.",
+      "tags": ["translation", "i18n", "standardization"],
+      "inputModes": ["text/plain"],
+      "outputModes": ["application/json"]
+    }
+  ]
+}

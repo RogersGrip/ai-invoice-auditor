@@ -1,0 +1,35 @@
+{
+  "protocolVersion": "0.3.0",
+  "name": "RAG Knowledge Agent",
+  "description": "Manages the indexing of invoice data into Vector Stores and handles semantic retrieval queries.",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "NuvePro Lab",
+    "url": "https://nuvepro.example.com"
+  },
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": false,
+    "stateTransitionHistory": false
+  },
+  "defaultInputModes": ["text/plain", "application/json"],
+  "defaultOutputModes": ["text/plain"],
+  "skills": [
+    {
+      "id": "vector-indexing",
+      "name": "Invoice Indexer",
+      "description": "Chunks and indexes invoice content into Qdrant.",
+      "tags": ["rag", "vector", "database"],
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/plain"]
+    },
+    {
+      "id": "semantic-search",
+      "name": "Semantic Retriever",
+      "description": "Retrieves relevant context for natural language queries.",
+      "tags": ["search", "retrieval"],
+      "inputModes": ["text/plain"],
+      "outputModes": ["application/json"]
+    }
+  ]
+}

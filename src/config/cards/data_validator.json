@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "0.3.0",
+  "name": "Data Validation Agent",
+  "description": "Validates the structural integrity and completeness of extracted invoice data against mandatory rules.",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "NuvePro Lab",
+    "url": "https://nuvepro.example.com"
+  },
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "stateTransitionHistory": true
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "completeness-check",
+      "name": "Data Completeness Check",
+      "description": "Verifies that all required fields (Date, Total, Vendor, etc.) are present and valid types.",
+      "tags": ["validation", "rules", "compliance"],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"]
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "0.3.0",
+  "name": "Reporting Agent",
+  "description": "Aggregates validation results, discrepancies, and metadata into final human-readable reports.",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "NuvePro Lab",
+    "url": "https://nuvepro.example.com"
+  },
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": true,
+    "stateTransitionHistory": true
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/pdf", "application/json", "text/html"],
+  "skills": [
+    {
+      "id": "report-generation",
+      "name": "Audit Report Generator",
+      "description": "Generates PDF, JSON, and HTML audit trails for processed invoices.",
+      "tags": ["reporting", "pdf", "audit"],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/pdf"]
+    }
+  ]
+}
