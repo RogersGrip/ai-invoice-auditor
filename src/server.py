@@ -1,8 +1,11 @@
 import uvicorn
 import uuid
 import os
+import threading
+import time
 import warnings
 from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Path, Body
+from fastapi.concurrency import run_in_threadpool
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
@@ -18,18 +21,48 @@ from src.core.state import InvoiceState, ProcessingStatus
 from src.core.discovery import AgentDiscovery
 from src.workflows.graph import create_invoice_graph
 from src.core.config import settings
+from src.adk_agents.monitor_agent import InvoiceMonitorAgent
 
 setup_logger()
 
 graph_app = None
+monitor_agent = InvoiceMonitorAgent()
+stop_monitor = False
+
+def monitor_loop():
+    logger.info("📂 Invoice Monitor Started...")
+    while not stop_monitor:
+        try:
+            jobs = monitor_agent.scan()
+            for job in jobs:
+                file_path = job.get("file_path")
+                if not file_path: continue
+                fname = os.path.basename(file_path)
+                # Check processed dir
+                if (settings.PROCESSED_DIR / fname).exists():
+                    continue
+                # Also check active threads via graph state if possible, but for now simple check
+                logger.info(f"👀 Auto-processing: {fname}")
+                run_background_task(fname, file_path)
+                time.sleep(2)
+        except Exception as e:
+            logger.error(f"Monitor Loop Error: {e}")
+        time.sleep(5)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global graph_app
+    global graph_app, stop_monitor
     logger.info("Initializing Orchestrator Graph...")
     graph_app = create_invoice_graph()
+    
+    t = threading.Thread(target=monitor_loop, daemon=True)
+    t.start()
+    
     yield
+    
     logger.info("Shutting down...")
+    stop_monitor = True
+    t.join(timeout=2)
 
 app = FastAPI(title="AI Invoice Auditor A2A Server", version="1.0.0", lifespan=lifespan)
 
@@ -45,8 +78,9 @@ def run_background_task(thread_id: str, file_path: str):
         current_step="start",
         status=ProcessingStatus.PENDING
     )
+    
     try:
-        logger.info(f"STARTING WORKFLOW | ID: {thread_id} | File: {abs_path}")
+        logger.info(f"STARTING WORKFLOW | ID: {thread_id}")
         graph_app.invoke(initial_state, config=config)
     except Exception as e:
         logger.error(f"WORKFLOW FAILED | ID: {thread_id} | Error: {e}")
@@ -54,76 +88,74 @@ def run_background_task(thread_id: str, file_path: str):
 @app.get("/.well-known/agent-card.json", response_model=AgentCard)
 async def get_default_agent_card():
     card = AgentDiscovery.get_card("AI Invoice Auditor Orchestrator")
-    if not card:
-        return AgentDiscovery.get_all_cards().get(list(AgentDiscovery.get_all_cards().keys())[0])
+    if not card: 
+        cards = AgentDiscovery.get_all_cards()
+        if cards:
+            return cards.get(list(cards.keys())[0])
+        raise HTTPException(500, "No cards loaded")
     return card
 
 @app.get("/v1/agents/{agent_name}/agent-card.json", response_model=AgentCard)
 async def get_specific_agent_card(agent_name: str = Path(...)):
     card = AgentDiscovery.get_card(agent_name)
-    if not card:
-        raise HTTPException(status_code=404, detail=f"Agent card for '{agent_name}' not found")
+    if not card: raise HTTPException(status_code=404, detail=f"Agent card for '{agent_name}' not found")
     return card
 
 @app.post("/v1/message:send", response_model=SendMessageResponse)
-async def send_message(
-    request: SendMessageRequest,
-    background_tasks: BackgroundTasks,
-    a2a_version: str = Header(default="0.3.0", alias="A2A-Version")
-):
+async def send_message(request: SendMessageRequest, background_tasks: BackgroundTasks, a2a_version: str = Header(default="0.3.0", alias="A2A-Version")):
     msg = request.message
     context_id = msg.contextId or str(uuid.uuid4())
-    tasks_created = []
     
+    # Handle File Processing Tasks
+    tasks_created = []
     for part in msg.parts:
         if part.file:
             task_id = part.file.name
             fname = part.file.name
-            
             if part.file.fileWithUri and part.file.fileWithUri.startswith("file://"):
                 input_file = part.file.fileWithUri.replace("file://", "")
             else:
-                 input_file = str(settings.INVOICE_WATCH_DIR / fname)
+                input_file = str(settings.INVOICE_WATCH_DIR / fname)
             
             if not os.path.exists(input_file):
                 raise HTTPException(status_code=400, detail=f"File not found on server: {input_file}")
-
+            
             background_tasks.add_task(run_background_task, task_id, input_file)
             tasks_created.append(task_id)
-
+            
     if tasks_created:
-        return SendMessageResponse(
-            task=Task(
-                id=tasks_created[0],
-                contextId=context_id,
-                status=TaskStatus(state=TaskState.SUBMITTED)
-            )
-        )
+        return SendMessageResponse(task=Task(id=tasks_created[0], contextId=context_id, status=TaskStatus(state=TaskState.SUBMITTED)))
 
-    # Chat Handling
+    # Handle Chat / RAG
     input_text = next((p.text for p in msg.parts if p.text), None)
     if input_text:
-        from src.workflows.rag_graph import create_rag_graph
-        rag = create_rag_graph()
-        result = rag.invoke({"query": input_text})
-        
-        response_msg = Message(
-            messageId=str(uuid.uuid4()),
-            role=Role.AGENT,
-            contextId=context_id,
-            parts=[Part(text=result.get("answer", "No answer found."))]
-        )
-        return SendMessageResponse(message=response_msg)
+        # Run RAG in threadpool to avoid blocking main loop
+        def run_rag_sync(text):
+            from src.workflows.rag_graph import create_rag_graph
+            rag = create_rag_graph()
+            return rag.invoke({"query": text})
 
-    raise HTTPException(status_code=400, detail="No valid input.")
+        try:
+            result = await run_in_threadpool(run_rag_sync, input_text)
+            response_msg = Message(
+                messageId=str(uuid.uuid4()), 
+                role=Role.AGENT, 
+                contextId=context_id, 
+                parts=[Part(text=result.get("answer", "No answer found."))]
+            )
+            return SendMessageResponse(message=response_msg)
+        except Exception as e:
+            logger.error(f"RAG Error: {e}")
+            raise HTTPException(status_code=500, detail=f"RAG Error: {e}")
+
+    raise HTTPException(status_code=400, detail="No valid input found (text or file).")
 
 @app.get("/v1/tasks/{id}", response_model=Task)
 async def get_task(id: str):
     config = {"configurable": {"thread_id": id}}
     try:
         snapshot = graph_app.get_state(config)
-        if not snapshot.values:
-             raise HTTPException(status_code=404, detail="Task not found or not started.")
+        if not snapshot.values: raise HTTPException(status_code=404, detail="Task not found")
         current_invoice_state = InvoiceState(**snapshot.values)
         return map_state_to_task(current_invoice_state, context_id="default-ctx")
     except HTTPException: raise
@@ -137,15 +169,17 @@ async def resume_task(id: str, comment: Optional[str] = Body(None, embed=True)):
     try:
         logger.info(f"Received RESUME request for Task ID: {id}")
         snapshot = graph_app.get_state(config)
-        if not snapshot.values:
-             logger.error(f"Resume Failed: No state found for {id}")
-             raise HTTPException(status_code=404, detail=f"Task {id} not found to resume.")
+        if not snapshot.values: raise HTTPException(status_code=404, detail=f"Task {id} not found")
         
-        if not snapshot.next:
-            return {"status": "Task is not paused or already completed."}
-        
+        # Check if actually paused
+        if not snapshot.next: 
+            # If completed, we can't resume
+            return {"status": "Task is not paused (Completed or Failed)"}
+            
         logger.info(f"Resuming task {id} with comment: {comment}")
+        # Passing None input resumes from the interruption point
         graph_app.invoke(None, config=config)
+        
         return {"status": "Resumed successfully"}
     except HTTPException: raise
     except Exception as e:

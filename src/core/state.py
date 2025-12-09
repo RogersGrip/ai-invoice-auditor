@@ -13,22 +13,23 @@ class ProcessingStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     DATA_INVALID = "data_invalid"
+    BUSINESS_MISMATCH = "business_mismatch"
 
 class LineItem(BaseModel):
     item_code: Optional[str] = Field(None, description="SKU or Item Code")
-    description: Optional[str] = None
-    qty: Optional[float] = None
-    unit_price: Optional[float] = None
-    currency: Optional[str] = None
-    total: Optional[float] = None
+    description: Optional[str] = Field(None, description="Description of the line item")
+    qty: Optional[float] = Field(None, description="Quantity")
+    unit_price: Optional[float] = Field(None, description="Unit price per item")
+    currency: Optional[str] = Field(None, description="Currency code (e.g. USD, EUR)")
+    total: Optional[float] = Field(None, description="Total line amount")
 
 class InvoiceData(BaseModel):
-    invoice_no: Optional[str] = None
-    invoice_date: Optional[str] = None
-    vendor_id: Optional[str] = None
-    currency: Optional[str] = None
-    total_amount: Optional[float] = None
-    line_items: List[LineItem] = Field(default_factory=list)
+    invoice_no: Optional[str] = Field(None, description="Invoice Number")
+    invoice_date: Optional[str] = Field(None, description="Invoice Date (YYYY-MM-DD)")
+    vendor_id: Optional[str] = Field(None, description="Vendor Name or ID")
+    currency: Optional[str] = Field(None, description="Invoice Currency")
+    total_amount: Optional[float] = Field(None, description="Total Invoice Amount")
+    line_items: List[LineItem] = Field(default_factory=list, description="List of line items in the invoice")
     original_language: str = "en"
     translation_confidence: float = 1.0
 
@@ -43,31 +44,32 @@ class InvoiceState(BaseModel):
     file_path: str
     file_name: str
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    
     raw_text: Optional[str] = None
     redacted_text: Optional[str] = None
+    
     safety_report: Optional[SafetyReport] = None
     extracted_data: Dict[str, Any] = Field(default_factory=dict)
     standardized_invoice: Optional[InvoiceData] = None
+    
     validation_results: Dict[str, Any] = Field(default_factory=dict)
     report_path: Optional[Dict[str, str]] = None
+    
     current_step: str = "start"
     status: ProcessingStatus = ProcessingStatus.PENDING
     error_log: List[str] = Field(default_factory=list)
     translation_meta: Dict[str, Any] = Field(default_factory=dict)
-    
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 def update_progress(file_name: str, step: str, status: str = "processing"):
-    """Helper to update status.json for frontend/monitoring."""
     from pathlib import Path
     import time
     import shutil
-    
     try:
         project_root = Path.cwd()
         status_path = project_root / "data" / "status.json"
         temp_path = project_root / "data" / "status.tmp"
-        
         status_path.parent.mkdir(parents=True, exist_ok=True)
         
         data = {
@@ -76,7 +78,6 @@ def update_progress(file_name: str, step: str, status: str = "processing"):
             "status": status,
             "timestamp": time.time()
         }
-        
         with open(temp_path, "w") as f:
             json.dump(data, f)
         shutil.move(str(temp_path), str(status_path))

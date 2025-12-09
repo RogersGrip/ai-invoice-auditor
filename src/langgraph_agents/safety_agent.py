@@ -4,10 +4,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, List
 from pydantic import BaseModel, Field
-
 from langchain_aws import ChatBedrockConverse
 from langchain_core.messages import HumanMessage
-
 from src.core.protocol import Agent, AgentResponse
 from src.core.logger import logger
 from src.core.config import settings
@@ -23,10 +21,10 @@ class SafetyAgent(Agent):
     description = "Scans text for PII, Toxicity, and Bias using Regex and LLM guardrails."
 
     PII_PATTERNS = {
-        'email': r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}\b",
-        'phone': r"\b(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{4}\b",
-        'credit_card': r"\b(?:\d[ -]*?){13,16}\b",
-        'ssn': r"\b[2-9]{1}[0-9]{3}[-\s]?[0-9]{4}[-\s]?[0-9]{4}\b"
+        "EMAIL": r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}\b",
+        "PHONE": r"\b(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{4}\b",
+        "CREDIT_CARD": r"\b(?:\d[ -]*?){13,16}\b",
+        "SSN": r"\b[2-9]{1}[0-9]{3}[-\s]?[0-9]{4}[-\s]?[0-9]{4}\b"
     }
 
     def __init__(self):
@@ -44,20 +42,17 @@ class SafetyAgent(Agent):
     def _redact_pii(self, text: str) -> tuple[str, List[str]]:
         detected_types = set()
         redacted_text = text
-        
         for pii_type, pattern in self.PII_PATTERNS.items():
             matches = re.findall(pattern, redacted_text)
             if matches:
                 detected_types.add(pii_type)
                 redacted_text = re.sub(pattern, f"[{pii_type.upper()}_REDACTED]", redacted_text)
-        
         return redacted_text, list(detected_types)
 
     def _check_toxicity_llm(self, text: str) -> ToxicityAnalysis:
         if not self.llm:
             return ToxicityAnalysis(toxicity_score=0.0, is_biased=False, reasoning="LLM unavailable")
-
-        # Robust prompt for direct JSON
+        
         prompt = f"""
         Analyze the text below for toxicity, hate speech, and bias.
         Return a valid JSON object with:
@@ -67,35 +62,33 @@ class SafetyAgent(Agent):
 
         Text to analyze:
         {text[:2000]}...
-        
+
         JSON OUTPUT:
         """
-        
         try:
             response = self.llm.invoke([HumanMessage(content=prompt)])
             content = response.content.strip()
-            
-            # Extract JSON
+            # Try to find JSON block
             match = re.search(r"\{.*\}", content, re.DOTALL)
             if match:
                 json_str = match.group(0)
                 data = json.loads(json_str)
                 return ToxicityAnalysis(**data)
             else:
-                raise ValueError("No JSON found in response")
-
+                # Basic heuristic if JSON parsing fails
+                score = 0.8 if "toxic" in content.lower() else 0.0
+                return ToxicityAnalysis(toxicity_score=score, is_biased=False, reasoning="Parse Error, manual fallback")
         except Exception as e:
-            logger.error(f"Toxicity check failed: {e}")
-            return ToxicityAnalysis(toxicity_score=0.0, is_biased=False, reasoning="Check failed or parsing error")
+            # CRITICAL FIX: Catch AccessDenied/Policy errors and allow workflow to proceed
+            logger.warning(f"Toxicity check failed (Auth/Policy): {e}")
+            return ToxicityAnalysis(toxicity_score=0.0, is_biased=False, reasoning="Safety Check Skipped (Policy/Auth Error)")
 
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
         self.start_as_current_observation(inputs)
-        
         raw_text = inputs.get("raw_text", "")
         file_name = inputs.get("file_name", "unknown")
-        
+
         if not raw_text:
-            # Handle empty text gracefully
             report = SafetyReport(is_safe=True, details="No text content.")
             return AgentResponse(
                 id=str(uuid.uuid4()),
@@ -112,16 +105,14 @@ class SafetyAgent(Agent):
             )
 
         logger.info(f"Running Safety Checks for {file_name}...")
-
-        # 1. PII Redaction
         redacted_text, pii_found = self._redact_pii(raw_text)
+        
         if pii_found:
             logger.info(f"PII Detected & Redacted: {pii_found}")
 
-        # 2. Toxicity & Bias Check
         analysis = self._check_toxicity_llm(redacted_text)
         
-        is_safe = analysis.toxicity_score < 0.8  # Threshold
+        is_safe = analysis.toxicity_score < 0.8
         
         report = SafetyReport(
             is_safe=is_safe,
