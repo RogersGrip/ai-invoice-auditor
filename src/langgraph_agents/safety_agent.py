@@ -4,8 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, List
 from pydantic import BaseModel, Field
-from langchain_aws import ChatBedrockConverse
-from langchain_core.messages import HumanMessage
+from src.core.llm_wrapper import BedrockCommandRPlus # Import Fix
 from src.core.protocol import Agent, AgentResponse
 from src.core.logger import logger
 from src.core.config import settings
@@ -28,12 +27,11 @@ class SafetyAgent(Agent):
     }
 
     def __init__(self):
-        self.model_id = "cohere.command-r-plus-v1:0"
+        self.model_id = settings.SAFETY_MODEL
         try:
-            self.llm = ChatBedrockConverse(
-                model=self.model_id,
-                temperature=0.0,
-                max_tokens=1024
+            self.llm = BedrockCommandRPlus(
+                model_id=self.model_id,
+                model_kwargs={"temperature": 0.0, "max_tokens": 1024}
             )
         except Exception as e:
             logger.warning(f"Failed to init Bedrock LLM: {e}. Safety checks will run in fallback mode.")
@@ -66,22 +64,19 @@ class SafetyAgent(Agent):
         JSON OUTPUT:
         """
         try:
-            response = self.llm.invoke([HumanMessage(content=prompt)])
-            content = response.content.strip()
-            # Try to find JSON block
+            content = self.llm.invoke(prompt)
+            content = content.strip()
             match = re.search(r"\{.*\}", content, re.DOTALL)
             if match:
                 json_str = match.group(0)
                 data = json.loads(json_str)
                 return ToxicityAnalysis(**data)
             else:
-                # Basic heuristic if JSON parsing fails
                 score = 0.8 if "toxic" in content.lower() else 0.0
                 return ToxicityAnalysis(toxicity_score=score, is_biased=False, reasoning="Parse Error, manual fallback")
         except Exception as e:
-            # CRITICAL FIX: Catch AccessDenied/Policy errors and allow workflow to proceed
-            logger.warning(f"Toxicity check failed (Auth/Policy): {e}")
-            return ToxicityAnalysis(toxicity_score=0.0, is_biased=False, reasoning="Safety Check Skipped (Policy/Auth Error)")
+            logger.warning(f"Toxicity check failed: {e}")
+            return ToxicityAnalysis(toxicity_score=0.0, is_biased=False, reasoning="Safety Check Skipped (Error)")
 
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
         self.start_as_current_observation(inputs)

@@ -5,7 +5,6 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 from datetime import datetime, timezone
 from fpdf import FPDF
-import instructor
 from pydantic import BaseModel, Field
 
 from src.core.protocol import MCPTool
@@ -14,8 +13,11 @@ from src.core.logger import logger
 from src.database.qdrant_db import vector_store
 from src.tools.ocr_engine import OCREngine
 from src.core.state import InvoiceData
+from src.core.llm_wrapper import BedrockCommandRPlus  # Import the fix
 
-from langchain_aws import ChatBedrockConverse, BedrockEmbeddings
+from langchain_aws import BedrockEmbeddings
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from litellm import completion
 
@@ -60,7 +62,7 @@ class DataHarvesterTool(BaseTool):
 
 class LangBridgeTool(BaseTool):
     name: str = "Lang-Bridge Tool"
-    description: str = "Standardizes invoice content to English JSON using LLM Structured Outputs."
+    description: str = "Standardizes invoice content to English JSON using Command R+."
     input_schema: Dict[str, Any] = {
         "type": "object",
         "properties": {
@@ -72,38 +74,42 @@ class LangBridgeTool(BaseTool):
 
     @observe(name="LangBridgeTool.run")
     def run(self, text: str, target_language: str = "en") -> Dict[str, Any]:
-        """
-        Uses Instructor with JSON Mode to extract structured data.
-        This avoids 'Invalid parameter' errors on Bedrock/Cohere native tool calling.
-        """
         model_name = settings.TRANSLATION_MODEL
-        
-        # Use MD_JSON mode which is robust for Cohere/Command models
-        client = instructor.from_litellm(completion, mode=instructor.Mode.MD_JSON)
+        logger.info(f"LangBridge: Extracting with {model_name} (Fixed Payload)")
 
-        logger.info(f"LangBridge: Extracting structured data using {model_name}")
-        
         try:
-            # We explicitly ask the model to act as a tool caller to fill InvoiceData
-            invoice_data = client.chat.completions.create(
-                model=model_name,
-                response_model=InvoiceData,
-                messages=[
-                    {
-                        "role": "system", 
-                        "content": "You are an expert Invoice Auditor. Extract data from the invoice below into the required JSON structure. Translate non-English descriptions to English. Normalize currencies to ISO codes (USD, EUR, INR, GBP)."
-                    },
-                    {"role": "user", "content": f"Invoice Content:\n{text}"}
-                ],
-                max_tokens=4000,
-                temperature=0.0
+            parser = PydanticOutputParser(pydantic_object=InvoiceData)
+            prompt = PromptTemplate(
+                template="""You are an expert Invoice Auditor.
+                TASK: Extract structured data from the invoice below.
+                - Translate non-English descriptions to English.
+                - Normalize currencies to ISO codes (USD, EUR, INR, GBP).
+                - Ensure strict adherence to the format.
+
+                {format_instructions}
+
+                INVOICE TEXT:
+                {text}
+                """,
+                input_variables=["text"],
+                partial_variables={"format_instructions": parser.get_format_instructions()},
             )
+
+            # Use the Wrapper that handles "message" key correctly
+            llm = BedrockCommandRPlus(
+                model_id=model_name,
+                model_kwargs={"temperature": 0.0, "max_tokens": 4000}
+            )
+
+            chain = prompt | llm | parser
+            invoice_data = chain.invoke({"text": text})
+            
             return {"extracted_data": invoice_data.model_dump(), "model": model_name}
+
         except Exception as e:
-            logger.error(f"LangBridge Tool Call Error: {e}")
-            # Return a valid empty structure to prevent workflow crash
+            logger.error(f"LangBridge Extraction Error: {e}")
             return {
-                "extracted_data": InvoiceData().model_dump(), 
+                "extracted_data": InvoiceData().model_dump(),
                 "error": str(e)
             }
 
@@ -121,9 +127,8 @@ class DataCompletenessCheckerTool(BaseTool):
         missing = []
         required_headers = ["invoice_no", "invoice_date", "total_amount", "vendor_id"]
         
-        # Handle case where invoice_data might be None due to upstream failure
         if not invoice_data:
-            return {"validation_status": "invalid", "missing_fields": ["CRITICAL_DATA_MISSING"]}
+            return {"validation_status": "invalid", "missing_fields": ["CRITICAL_NO_DATA"]}
 
         for field in required_headers:
             val = invoice_data.get(field)
@@ -137,7 +142,6 @@ class DataCompletenessCheckerTool(BaseTool):
             for i, item in enumerate(items):
                 if not item.get("item_code"):
                     missing.append(f"line_item[{i}].item_code")
-                # Relaxed check: either total OR unit_price is needed
                 if item.get("total") is None and item.get("unit_price") is None:
                     missing.append(f"line_item[{i}].price_info")
 
@@ -230,7 +234,6 @@ class InsightReporterTool(BaseTool):
         pdf.set_text_color(0, 0, 0)
         pdf.ln(5)
 
-        # Safety Section
         if safety_report:
             pdf.set_fill_color(255, 240, 245) if not safety_report.get("is_safe") else pdf.set_fill_color(240, 255, 240)
             pdf.set_font("Arial", 'B', 12)
@@ -243,7 +246,6 @@ class InsightReporterTool(BaseTool):
             pdf.cell(0, 8, self._sanitize(pii), border=1, ln=1)
             pdf.ln(5)
 
-        # Data Section
         pdf.set_fill_color(230, 230, 250)
         pdf.set_font("Arial", 'B', 12)
         pdf.cell(0, 8, " Extracted Invoice Data", ln=1, fill=True, border=1)
@@ -289,7 +291,6 @@ class InsightReporterTool(BaseTool):
                 pdf.cell(25, 8, total, border=1, align='R', ln=1)
         pdf.ln(5)
 
-        # Validation Section
         pdf.set_font("Arial", 'B', 12)
         pdf.set_fill_color(255, 250, 205)
         pdf.cell(0, 8, " Validation Results", ln=1, fill=True, border=1)
@@ -359,7 +360,6 @@ class ChunkRankerTool(BaseTool):
     @observe(name="ChunkRankerTool.run")
     def run(self, docs: List[Dict]) -> str:
         if not docs: return ""
-        # Mock re-ranking based on score for now, but infrastructure is here
         ranked = sorted(docs, key=lambda d: d.get('score', 0), reverse=True)
         return "\n---\n".join([f"Source: {d.get('metadata',{}).get('filename')}\n{d.get('text')}" for d in ranked])
 
@@ -406,18 +406,18 @@ class RAGEvaluatorTool(BaseTool):
             from ragas.embeddings import LangchainEmbeddingsWrapper
             from datasets import Dataset
 
-            bedrock_llm = ChatBedrockConverse(model=settings.VALIDATION_MODEL, temperature=0)
+            # Use Correct Wrapper for Ragas
+            bedrock_llm = BedrockCommandRPlus(model_id=settings.VALIDATION_MODEL, model_kwargs={"temperature": 0.0})
             bedrock_emb = BedrockEmbeddings(model_id=settings.EMBEDDING_MODEL)
 
             data = {
                 "question": [query],
                 "answer": [answer],
                 "contexts": [[context]], 
-                "ground_truth": [answer] # Self-consistency check since we don't have human ground truth here
+                "ground_truth": [answer] 
             }
             dataset = Dataset.from_dict(data)
             
-            # Using ALL metrics as requested
             results = evaluate(
                 dataset=dataset,
                 metrics=[faithfulness, answer_relevancy, context_precision, context_recall],

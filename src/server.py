@@ -7,7 +7,7 @@ import warnings
 from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Path, Body
 from fastapi.concurrency import run_in_threadpool
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import List, Optional, Set
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -28,6 +28,8 @@ setup_logger()
 graph_app = None
 monitor_agent = InvoiceMonitorAgent()
 stop_monitor = False
+# Track files currently in the pipeline to prevent looping
+processing_files: Set[str] = set()
 
 def monitor_loop():
     logger.info("📂 Invoice Monitor Started...")
@@ -38,11 +40,15 @@ def monitor_loop():
                 file_path = job.get("file_path")
                 if not file_path: continue
                 fname = os.path.basename(file_path)
-                # Check processed dir
+                
+                # SKIP if already processed or currently processing
                 if (settings.PROCESSED_DIR / fname).exists():
                     continue
-                # Also check active threads via graph state if possible, but for now simple check
+                if fname in processing_files:
+                    continue
+
                 logger.info(f"👀 Auto-processing: {fname}")
+                processing_files.add(fname)
                 run_background_task(fname, file_path)
                 time.sleep(2)
         except Exception as e:
@@ -84,6 +90,9 @@ def run_background_task(thread_id: str, file_path: str):
         graph_app.invoke(initial_state, config=config)
     except Exception as e:
         logger.error(f"WORKFLOW FAILED | ID: {thread_id} | Error: {e}")
+        fname = os.path.basename(file_path)
+        if fname in processing_files:
+            processing_files.remove(fname)
 
 @app.get("/.well-known/agent-card.json", response_model=AgentCard)
 async def get_default_agent_card():
@@ -120,8 +129,10 @@ async def send_message(request: SendMessageRequest, background_tasks: Background
             if not os.path.exists(input_file):
                 raise HTTPException(status_code=400, detail=f"File not found on server: {input_file}")
             
-            background_tasks.add_task(run_background_task, task_id, input_file)
-            tasks_created.append(task_id)
+            if fname not in processing_files:
+                processing_files.add(fname)
+                background_tasks.add_task(run_background_task, task_id, input_file)
+                tasks_created.append(task_id)
             
     if tasks_created:
         return SendMessageResponse(task=Task(id=tasks_created[0], contextId=context_id, status=TaskStatus(state=TaskState.SUBMITTED)))
@@ -173,13 +184,16 @@ async def resume_task(id: str, comment: Optional[str] = Body(None, embed=True)):
         
         # Check if actually paused
         if not snapshot.next: 
-            # If completed, we can't resume
             return {"status": "Task is not paused (Completed or Failed)"}
             
         logger.info(f"Resuming task {id} with comment: {comment}")
         # Passing None input resumes from the interruption point
         graph_app.invoke(None, config=config)
         
+        # Cleanup from processing list once resumed and finished
+        if id in processing_files:
+            processing_files.remove(id)
+            
         return {"status": "Resumed successfully"}
     except HTTPException: raise
     except Exception as e:
