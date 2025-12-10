@@ -13,7 +13,7 @@ from src.core.logger import logger
 from src.database.qdrant_db import vector_store
 from src.tools.ocr_engine import OCREngine
 from src.core.state import InvoiceData
-from src.core.llm_wrapper import BedrockCommandRPlus # Uses fixed wrapper
+from src.core.llm_wrapper import BedrockCommandRPlus # Use Fixed Wrapper
 
 from langchain_aws import BedrockEmbeddings
 from langchain_core.prompts import PromptTemplate
@@ -95,7 +95,7 @@ class LangBridgeTool(BaseTool):
                 partial_variables={"format_instructions": parser.get_format_instructions()},
             )
 
-            # Use fixed wrapper with explicit US-EAST-1
+            # Use Fixed Wrapper
             llm = BedrockCommandRPlus(
                 model_id=model_name,
                 model_kwargs={"temperature": 0.0, "max_tokens": 4000}
@@ -108,7 +108,6 @@ class LangBridgeTool(BaseTool):
 
         except Exception as e:
             logger.error(f"LangBridge Extraction Error: {e}")
-            # Robust fallback: return empty valid structure
             return {
                 "extracted_data": InvoiceData().model_dump(),
                 "error": str(e)

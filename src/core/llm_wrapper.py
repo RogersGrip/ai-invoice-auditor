@@ -10,20 +10,18 @@ from src.core.logger import logger
 
 class BedrockCommandRPlus(LLM):
     """
-    Custom LLM wrapper for Cohere Command R+ on AWS Bedrock (us-east-1).
+    Custom LLM wrapper for Cohere Command R+ on AWS Bedrock.
     
     Fixes:
-    1. Forces region to 'us-east-1'.
+    1. Removes hardcoded region (uses environment default).
     2. Sends correct 'message' payload (not 'prompt').
-    3. Removes 'stream' key from body (handles via API method).
+    3. REMOVES 'stream' key from body (critical fix for ValidationException).
     4. Sets custom read_timeout to prevent drops.
     """
     
     model_id: str = "cohere.command-r-plus-v1:0"
-    region_name: str = "us-east-1"  # FORCE US-EAST-1
     model_kwargs: Dict[str, Any] = Field(default_factory=dict)
-    
-    # Use PrivateAttr for client to avoid Pydantic serialization issues
+    client: Any = Field(default=None, exclude=True)
     _client: Any = PrivateAttr()
 
     def __init__(self, **kwargs):
@@ -34,11 +32,9 @@ class BedrockCommandRPlus(LLM):
             connect_timeout=10,
             retries={"max_attempts": 3}
         )
-        
-        # Explicitly use the requested region
+        # Use default region from environment
         self._client = boto3.client(
             "bedrock-runtime", 
-            region_name=self.region_name,
             config=config
         )
 
@@ -80,6 +76,8 @@ class BedrockCommandRPlus(LLM):
         body = self._prepare_payload(prompt, params)
 
         try:
+            # Bedrock API handles streaming here. 
+            # DO NOT include 'stream': True in the body.
             response = self._client.invoke_model_with_response_stream(
                 modelId=self.model_id,
                 body=json.dumps(body)
@@ -89,6 +87,7 @@ class BedrockCommandRPlus(LLM):
                 chunk = event.get("chunk")
                 if chunk:
                     chunk_json = json.loads(chunk.get("bytes").decode())
+                    # Cohere R+ text field
                     text_chunk = chunk_json.get("text", "")
                     
                     if not text_chunk and "generations" in chunk_json:
@@ -106,11 +105,12 @@ class BedrockCommandRPlus(LLM):
 
     def _prepare_payload(self, prompt: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Construct correct payload for Command R+"""
-        # Remove keys that cause ValidationException on Bedrock
+        # Critical Fix: Remove 'stream' key. 
+        # AWS Bedrock throws ValidationException if this is present.
         params.pop("stream", None) 
         
         return {
-            "message": prompt, # Command R+ uses 'message', not 'prompt'
+            "message": prompt, # Command R+ uses 'message'
             "max_tokens": params.get("max_tokens", 4000),
             "temperature": params.get("temperature", 0.0),
         }

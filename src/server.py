@@ -29,27 +29,58 @@ setup_logger()
 graph_app = None
 monitor_agent = InvoiceMonitorAgent()
 stop_monitor = False
+# Track files currently in the pipeline to prevent looping
 processing_files: Set[str] = set()
 
 def monitor_loop():
     logger.info("📂 Invoice Monitor Started...")
     while not stop_monitor:
         try:
+            # Wait for graph to be ready
+            if not graph_app:
+                time.sleep(1)
+                continue
+
             jobs = monitor_agent.scan()
             for job in jobs:
                 file_path = job.get("file_path")
                 if not file_path: continue
                 fname = os.path.basename(file_path)
                 
-                # Ignore metadata files in monitor
+                # IGNORE metadata and system files
                 if fname.endswith(".meta.json") or fname == "status.json":
                     continue
                 
-                # Skip processed or currently processing
+                # SKIP if already archived
                 if (settings.PROCESSED_DIR / fname).exists():
                     continue
+                    
+                # SKIP if tracked in memory
                 if fname in processing_files:
                     continue
+
+                # --- CRITICAL FIX: Check Persistent DB State ---
+                # This prevents restarting a file that is "Paused" (waiting for approval)
+                # even if the server was restarted.
+                try:
+                    config = {"configurable": {"thread_id": fname}}
+                    # Get the current state from SQLite
+                    state_snap = graph_app.get_state(config)
+                    
+                    if state_snap and state_snap.values:
+                        # If workflow is paused (has a 'next' step like 'ingestion'), don't restart it
+                        if state_snap.next:
+                            # Add to memory so we don't check DB constantly
+                            processing_files.add(fname)
+                            continue
+                        
+                        # If completed but not archived (edge case), also skip
+                        if state_snap.values.get("status") == ProcessingStatus.COMPLETED:
+                            processing_files.add(fname)
+                            continue
+                except Exception:
+                    # No state found, safe to start
+                    pass
 
                 logger.info(f"👀 Auto-processing: {fname}")
                 processing_files.add(fname)
@@ -81,7 +112,7 @@ def run_background_task(thread_id: str, file_path: str):
     config = {"configurable": {"thread_id": thread_id}}
     abs_path = os.path.abspath(file_path)
     
-    # --- LOAD METADATA IF AVAILABLE ---
+    # Load metadata if exists
     metadata = {"source": "api"}
     try:
         meta_path = Path(abs_path).with_suffix(".meta.json")
@@ -90,8 +121,8 @@ def run_background_task(thread_id: str, file_path: str):
                 file_meta = json.load(f)
                 metadata.update(file_meta)
             logger.info(f"Loaded metadata for {os.path.basename(file_path)}")
-    except Exception as e:
-        logger.warning(f"Failed to load metadata: {e}")
+    except Exception:
+        pass
 
     initial_state = InvoiceState(
         file_path=abs_path,
@@ -115,8 +146,7 @@ async def get_default_agent_card():
     card = AgentDiscovery.get_card("AI Invoice Auditor Orchestrator")
     if not card: 
         cards = AgentDiscovery.get_all_cards()
-        if cards:
-            return cards.get(list(cards.keys())[0])
+        if cards: return cards.get(list(cards.keys())[0])
         raise HTTPException(500, "No cards loaded")
     return card
 
@@ -139,11 +169,9 @@ async def send_message(request: SendMessageRequest, background_tasks: Background
             task_id = part.file.name
             fname = part.file.name
             
-            # --- FIX: Handle Metadata Files Gracefully ---
+            # Explicitly ignore metadata files from triggering workflows
             if fname.endswith(".meta.json"):
-                logger.info(f"Metadata file received: {fname}")
                 meta_files_received = True
-                # Do not trigger a task, just acknowledge
                 continue
 
             if part.file.fileWithUri and part.file.fileWithUri.startswith("file://"):
@@ -152,16 +180,13 @@ async def send_message(request: SendMessageRequest, background_tasks: Background
                 input_file = str(settings.INVOICE_WATCH_DIR / fname)
             
             if not os.path.exists(input_file):
-                raise HTTPException(status_code=400, detail=f"File not found on server: {input_file}")
+                raise HTTPException(status_code=400, detail=f"File not found: {input_file}")
             
-            # --- FIX: Handle Race Condition (Monitor picked it up first) ---
+            # If already processing (e.g. picked up by monitor), just ack
             if fname in processing_files:
-                logger.info(f"File {fname} is already processing. Returning existing task.")
-                # We return success so UI doesn't show error
                 tasks_created.append(task_id)
                 continue
 
-            # Start new task
             processing_files.add(fname)
             background_tasks.add_task(run_background_task, task_id, input_file)
             tasks_created.append(task_id)
@@ -169,11 +194,10 @@ async def send_message(request: SendMessageRequest, background_tasks: Background
     if tasks_created:
         return SendMessageResponse(task=Task(id=tasks_created[0], contextId=context_id, status=TaskStatus(state=TaskState.SUBMITTED)))
 
-    # If only meta files were uploaded, return success (dummy message)
     if meta_files_received:
-        return SendMessageResponse(message=Message(messageId=str(uuid.uuid4()), role=Role.AGENT, parts=[Part(text="Metadata uploaded successfully.")]))
+        return SendMessageResponse(message=Message(messageId=str(uuid.uuid4()), role=Role.AGENT, parts=[Part(text="Metadata uploaded.")]))
 
-    # RAG Chat
+    # Handle RAG Chat
     input_text = next((p.text for p in msg.parts if p.text), None)
     if input_text:
         def run_rag_sync(text):
@@ -194,7 +218,7 @@ async def send_message(request: SendMessageRequest, background_tasks: Background
             logger.error(f"RAG Error: {e}")
             raise HTTPException(status_code=500, detail=f"RAG Error: {e}")
 
-    if not tasks_created and not meta_files_received:
+    if not tasks_created:
         raise HTTPException(status_code=400, detail="No valid input found.")
 
 @app.get("/v1/tasks/{id}", response_model=Task)
@@ -216,19 +240,21 @@ async def resume_task(id: str, comment: Optional[str] = Body(None, embed=True)):
     try:
         logger.info(f"Received RESUME request for Task ID: {id}")
         snapshot = graph_app.get_state(config)
-        if not snapshot.values: raise HTTPException(status_code=404, detail=f"Task {id} not found")
+        
+        if not snapshot.values: 
+            return {"status": "Task state not found."}
         
         if not snapshot.next: 
             return {"status": "Task is not paused (Completed or Failed)"}
             
         logger.info(f"Resuming task {id} with comment: {comment}")
+        # Resumes the workflow from the interrupt point
         graph_app.invoke(None, config=config)
         
         if id in processing_files:
             processing_files.remove(id)
             
         return {"status": "Resumed successfully"}
-    except HTTPException: raise
     except Exception as e:
         logger.error(f"Failed to resume task {id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
