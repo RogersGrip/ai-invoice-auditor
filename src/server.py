@@ -1,6 +1,7 @@
 import uvicorn
 import uuid
 import os
+import json
 import threading
 import time
 import warnings
@@ -28,7 +29,6 @@ setup_logger()
 graph_app = None
 monitor_agent = InvoiceMonitorAgent()
 stop_monitor = False
-# Track files currently in the pipeline to prevent looping
 processing_files: Set[str] = set()
 
 def monitor_loop():
@@ -41,7 +41,11 @@ def monitor_loop():
                 if not file_path: continue
                 fname = os.path.basename(file_path)
                 
-                # SKIP if already processed or currently processing
+                # Ignore metadata files in monitor
+                if fname.endswith(".meta.json") or fname == "status.json":
+                    continue
+                
+                # Skip processed or currently processing
                 if (settings.PROCESSED_DIR / fname).exists():
                     continue
                 if fname in processing_files:
@@ -77,10 +81,22 @@ def run_background_task(thread_id: str, file_path: str):
     config = {"configurable": {"thread_id": thread_id}}
     abs_path = os.path.abspath(file_path)
     
+    # --- LOAD METADATA IF AVAILABLE ---
+    metadata = {"source": "api"}
+    try:
+        meta_path = Path(abs_path).with_suffix(".meta.json")
+        if meta_path.exists():
+            with open(meta_path, "r") as f:
+                file_meta = json.load(f)
+                metadata.update(file_meta)
+            logger.info(f"Loaded metadata for {os.path.basename(file_path)}")
+    except Exception as e:
+        logger.warning(f"Failed to load metadata: {e}")
+
     initial_state = InvoiceState(
         file_path=abs_path,
         file_name=os.path.basename(abs_path),
-        metadata={"source": "api"},
+        metadata=metadata,
         current_step="start",
         status=ProcessingStatus.PENDING
     )
@@ -115,12 +131,21 @@ async def send_message(request: SendMessageRequest, background_tasks: Background
     msg = request.message
     context_id = msg.contextId or str(uuid.uuid4())
     
-    # Handle File Processing Tasks
     tasks_created = []
+    meta_files_received = False
+
     for part in msg.parts:
         if part.file:
             task_id = part.file.name
             fname = part.file.name
+            
+            # --- FIX: Handle Metadata Files Gracefully ---
+            if fname.endswith(".meta.json"):
+                logger.info(f"Metadata file received: {fname}")
+                meta_files_received = True
+                # Do not trigger a task, just acknowledge
+                continue
+
             if part.file.fileWithUri and part.file.fileWithUri.startswith("file://"):
                 input_file = part.file.fileWithUri.replace("file://", "")
             else:
@@ -129,18 +154,28 @@ async def send_message(request: SendMessageRequest, background_tasks: Background
             if not os.path.exists(input_file):
                 raise HTTPException(status_code=400, detail=f"File not found on server: {input_file}")
             
-            if fname not in processing_files:
-                processing_files.add(fname)
-                background_tasks.add_task(run_background_task, task_id, input_file)
+            # --- FIX: Handle Race Condition (Monitor picked it up first) ---
+            if fname in processing_files:
+                logger.info(f"File {fname} is already processing. Returning existing task.")
+                # We return success so UI doesn't show error
                 tasks_created.append(task_id)
+                continue
+
+            # Start new task
+            processing_files.add(fname)
+            background_tasks.add_task(run_background_task, task_id, input_file)
+            tasks_created.append(task_id)
             
     if tasks_created:
         return SendMessageResponse(task=Task(id=tasks_created[0], contextId=context_id, status=TaskStatus(state=TaskState.SUBMITTED)))
 
-    # Handle Chat / RAG
+    # If only meta files were uploaded, return success (dummy message)
+    if meta_files_received:
+        return SendMessageResponse(message=Message(messageId=str(uuid.uuid4()), role=Role.AGENT, parts=[Part(text="Metadata uploaded successfully.")]))
+
+    # RAG Chat
     input_text = next((p.text for p in msg.parts if p.text), None)
     if input_text:
-        # Run RAG in threadpool to avoid blocking main loop
         def run_rag_sync(text):
             from src.workflows.rag_graph import create_rag_graph
             rag = create_rag_graph()
@@ -159,7 +194,8 @@ async def send_message(request: SendMessageRequest, background_tasks: Background
             logger.error(f"RAG Error: {e}")
             raise HTTPException(status_code=500, detail=f"RAG Error: {e}")
 
-    raise HTTPException(status_code=400, detail="No valid input found (text or file).")
+    if not tasks_created and not meta_files_received:
+        raise HTTPException(status_code=400, detail="No valid input found.")
 
 @app.get("/v1/tasks/{id}", response_model=Task)
 async def get_task(id: str):
@@ -182,15 +218,12 @@ async def resume_task(id: str, comment: Optional[str] = Body(None, embed=True)):
         snapshot = graph_app.get_state(config)
         if not snapshot.values: raise HTTPException(status_code=404, detail=f"Task {id} not found")
         
-        # Check if actually paused
         if not snapshot.next: 
             return {"status": "Task is not paused (Completed or Failed)"}
             
         logger.info(f"Resuming task {id} with comment: {comment}")
-        # Passing None input resumes from the interruption point
         graph_app.invoke(None, config=config)
         
-        # Cleanup from processing list once resumed and finished
         if id in processing_files:
             processing_files.remove(id)
             

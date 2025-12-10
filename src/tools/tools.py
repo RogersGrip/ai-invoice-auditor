@@ -13,7 +13,7 @@ from src.core.logger import logger
 from src.database.qdrant_db import vector_store
 from src.tools.ocr_engine import OCREngine
 from src.core.state import InvoiceData
-from src.core.llm_wrapper import BedrockCommandRPlus  # Import the fix
+from src.core.llm_wrapper import BedrockCommandRPlus # Uses fixed wrapper
 
 from langchain_aws import BedrockEmbeddings
 from langchain_core.prompts import PromptTemplate
@@ -75,7 +75,7 @@ class LangBridgeTool(BaseTool):
     @observe(name="LangBridgeTool.run")
     def run(self, text: str, target_language: str = "en") -> Dict[str, Any]:
         model_name = settings.TRANSLATION_MODEL
-        logger.info(f"LangBridge: Extracting with {model_name} (Fixed Payload)")
+        logger.info(f"LangBridge: Extracting with {model_name}")
 
         try:
             parser = PydanticOutputParser(pydantic_object=InvoiceData)
@@ -95,7 +95,7 @@ class LangBridgeTool(BaseTool):
                 partial_variables={"format_instructions": parser.get_format_instructions()},
             )
 
-            # Use the Wrapper that handles "message" key correctly
+            # Use fixed wrapper with explicit US-EAST-1
             llm = BedrockCommandRPlus(
                 model_id=model_name,
                 model_kwargs={"temperature": 0.0, "max_tokens": 4000}
@@ -108,6 +108,7 @@ class LangBridgeTool(BaseTool):
 
         except Exception as e:
             logger.error(f"LangBridge Extraction Error: {e}")
+            # Robust fallback: return empty valid structure
             return {
                 "extracted_data": InvoiceData().model_dump(),
                 "error": str(e)
@@ -406,8 +407,12 @@ class RAGEvaluatorTool(BaseTool):
             from ragas.embeddings import LangchainEmbeddingsWrapper
             from datasets import Dataset
 
-            # Use Correct Wrapper for Ragas
-            bedrock_llm = BedrockCommandRPlus(model_id=settings.VALIDATION_MODEL, model_kwargs={"temperature": 0.0})
+            # Use Fixed Wrapper with Streaming Enabled
+            bedrock_llm = BedrockCommandRPlus(
+                model_id=settings.VALIDATION_MODEL, 
+                model_kwargs={"temperature": 0.0},
+                streaming=True 
+            )
             bedrock_emb = BedrockEmbeddings(model_id=settings.EMBEDDING_MODEL)
 
             data = {

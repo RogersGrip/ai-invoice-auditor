@@ -18,7 +18,6 @@ API_URL = "http://localhost:8000"
 st.set_page_config(page_title="AI Invoice Auditor", page_icon="🛡️", layout="wide")
 st.title("🛡️ AI Invoice Auditor & Safety Guard")
 
-# --- Helper Functions ---
 def trigger_processing(file_path):
     try:
         try: 
@@ -39,14 +38,13 @@ def trigger_processing(file_path):
                 }]
             }
         }
-        res = requests.post(f"{API_URL}/v1/message:send", json=payload, timeout=10)
+        res = requests.post(f"{API_URL}/v1/message:send", json=payload, timeout=120)
         if res.status_code == 200:
             return True, res.json()
         return False, res.text
     except Exception as e:
         return False, str(e)
 
-# --- Sidebar ---
 with st.sidebar:
     st.header("System Controls")
     if st.button("Refresh State 🔄"):
@@ -72,10 +70,8 @@ with st.sidebar:
     else:
         status_placeholder.success("System Idle")
 
-# --- Tabs ---
 tab1, tab2, tab3 = st.tabs(["🚀 Dashboard", "📊 Audit & Approval", "💬 Chat"])
 
-# --- Tab 1: Dashboard ---
 with tab1:
     c1, c2 = st.columns([1, 2])
     with c1:
@@ -87,9 +83,12 @@ with tab1:
                 p = settings.INVOICE_WATCH_DIR / f.name
                 with open(p, "wb") as w: 
                     w.write(f.getbuffer())
+                
+                # Try to process everything; backend handles meta files gracefully now
                 ok, res = trigger_processing(str(p))
+                
                 if ok: 
-                    st.toast(f"Started: {f.name}")
+                    st.toast(f"Uploaded: {f.name}")
                 else: 
                     st.error(f"Failed {f.name}: {res}")
                 bar.progress((i+1)/len(uploaded))
@@ -104,7 +103,6 @@ with tab1:
         - **Reports:** `{settings.OUTPUT_DIR}`
         """)
         
-        # Show recent files in watch dir
         watch_files = list(settings.INVOICE_WATCH_DIR.glob("*.*"))
         if watch_files:
             st.write("📁 **Files in Queue:**")
@@ -113,11 +111,9 @@ with tab1:
         else:
             st.write("✅ Queue is empty.")
 
-# --- Tab 2: Audit & Approval ---
 with tab2:
     st.subheader("Approval Center")
     
-    # Load reports efficiently
     all_reps = sorted(list(settings.OUTPUT_DIR.glob("*_report.json")), key=os.path.getmtime, reverse=True)
     
     unique_reports = {}
@@ -126,6 +122,10 @@ with tab2:
             with open(r) as f:
                 d = json.load(f)
                 fname = d.get("meta", {}).get("file_name")
+                
+                if fname and fname.endswith(".meta.json"):
+                    continue
+                    
                 if fname and fname not in unique_reports:
                     unique_reports[fname] = (r, d)
         except: continue
@@ -134,7 +134,6 @@ with tab2:
     processed_list = []
     
     for fname, (r_path, d) in unique_reports.items():
-        # Check archive status specifically
         is_archived = (settings.PROCESSED_DIR / fname).exists()
         status = d.get("meta", {}).get("status")
         
@@ -199,7 +198,6 @@ with tab2:
             _, r_path = proc_opts[sel_proc]
             st.json(json.load(open(r_path)))
 
-# --- Tab 3: Chat ---
 with tab3:
     st.header("💬 Invoice Assistant (RAG)")
     
@@ -217,8 +215,7 @@ with tab3:
             with st.spinner("Searching Knowledge Base..."):
                 try:
                     payload = {"message": {"messageId": str(time.time()), "role": "user", "parts": [{"text": q}]}}
-                    # Increased timeout for RAG
-                    res = requests.post(f"{API_URL}/v1/message:send", json=payload, timeout=60)
+                    res = requests.post(f"{API_URL}/v1/message:send", json=payload, timeout=120)
                     
                     if res.status_code == 200:
                         ans = res.json().get("message", {}).get("parts", [{}])[0].get("text", "No response.")
