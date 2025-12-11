@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, List
 from pydantic import BaseModel, Field
-from src.core.llm_wrapper import BedrockCommandRPlus # Import Fix
+from src.core.llm_wrapper import BedrockLLMService
 from src.core.protocol import Agent, AgentResponse
 from src.core.logger import logger
 from src.core.config import settings
@@ -18,7 +18,7 @@ class ToxicityAnalysis(BaseModel):
 class SafetyAgent(Agent):
     name = "Safety Agent"
     description = "Scans text for PII, Toxicity, and Bias using Regex and LLM guardrails."
-
+    
     PII_PATTERNS = {
         "EMAIL": r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}\b",
         "PHONE": r"\b(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{4}\b",
@@ -29,13 +29,14 @@ class SafetyAgent(Agent):
     def __init__(self):
         self.model_id = settings.SAFETY_MODEL
         try:
-            self.llm = BedrockCommandRPlus(
+            # Replaced BedrockCommandRPlus with BedrockLLMService
+            self.llm_service = BedrockLLMService(
                 model_id=self.model_id,
-                model_kwargs={"temperature": 0.0, "max_tokens": 1024}
+                temperature=0.0
             )
         except Exception as e:
             logger.warning(f"Failed to init Bedrock LLM: {e}. Safety checks will run in fallback mode.")
-            self.llm = None
+            self.llm_service = None
 
     def _redact_pii(self, text: str) -> tuple[str, List[str]]:
         detected_types = set()
@@ -48,7 +49,7 @@ class SafetyAgent(Agent):
         return redacted_text, list(detected_types)
 
     def _check_toxicity_llm(self, text: str) -> ToxicityAnalysis:
-        if not self.llm:
+        if not self.llm_service:
             return ToxicityAnalysis(toxicity_score=0.0, is_biased=False, reasoning="LLM unavailable")
         
         prompt = f"""
@@ -57,15 +58,18 @@ class SafetyAgent(Agent):
         - "toxicity_score": float (0.0 = safe, 1.0 = toxic)
         - "is_biased": boolean
         - "reasoning": string (brief explanation)
-
+        
         Text to analyze:
         {text[:2000]}...
-
+        
         JSON OUTPUT:
         """
         try:
-            content = self.llm.invoke(prompt)
+            # Use the new invoke method
+            content = self.llm_service.invoke(prompt)
             content = content.strip()
+            
+            # Extract JSON from potential markdown blocks
             match = re.search(r"\{.*\}", content, re.DOTALL)
             if match:
                 json_str = match.group(0)
@@ -80,9 +84,10 @@ class SafetyAgent(Agent):
 
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
         self.start_as_current_observation(inputs)
+        
         raw_text = inputs.get("raw_text", "")
         file_name = inputs.get("file_name", "unknown")
-
+        
         if not raw_text:
             report = SafetyReport(is_safe=True, details="No text content.")
             return AgentResponse(
@@ -104,11 +109,10 @@ class SafetyAgent(Agent):
         
         if pii_found:
             logger.info(f"PII Detected & Redacted: {pii_found}")
-
+            
         analysis = self._check_toxicity_llm(redacted_text)
-        
         is_safe = analysis.toxicity_score < 0.8
-        
+
         report = SafetyReport(
             is_safe=is_safe,
             pii_detected=pii_found,

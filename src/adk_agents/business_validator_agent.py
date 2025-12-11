@@ -1,54 +1,26 @@
-import re
-from typing import Dict, Any, List
 import uuid
+import json
+from typing import Dict, Any
 from datetime import datetime, timezone
+from langchain_core.tools import tool
+from src.adk_agents.base_adk import ADKAgent
+from src.core.protocol import AgentResponse
+from src.mcp_server.erp import logic_validate_line_item
 
-from src.core.protocol import Agent, AgentResponse
-from src.core.logger import logger
-from src.core.mcp_client import LocalMCPClient
-from src.mcp_server.erp import mcp as erp_server
+@tool
+def validate_line_item_tool(item_code: str, unit_price: float, currency: str = "USD") -> str:
+    """Validates a single line item against the ERP system. Returns JSON status."""
+    res = logic_validate_line_item(item_code, unit_price, currency)
+    return json.dumps(res)
 
-class BusinessValidationAgent(Agent):
-    name = "Business Validation Agent"
-    description = "Validates invoice line items against ERP records using MCP."
-
+class BusinessValidationAgent(ADKAgent):
     def __init__(self):
-        self.mcp_client = LocalMCPClient(erp_server)
-
-    def _parse_price(self, price_input: Any) -> float:
-        """
-        Robustly parses price strings like '4,00 €', '$5.00', '1.200,50' into floats.
-        """
-        if price_input is None:
-            return 0.0
-        if isinstance(price_input, (int, float)):
-            return float(price_input)
-        
-        # Convert to string and strip symbols (keep digits, comma, dot, minus)
-        clean_str = re.sub(r'[^\d.,-]', '', str(price_input)).strip()
-        
-        if not clean_str:
-            return 0.0
-            
-        try:
-            # Handle European format: 1.000,00 -> 1000.00
-            # If comma is present and appears AFTER the last dot (or no dot), assume it's decimal
-            if ',' in clean_str:
-                if '.' in clean_str:
-                    # Mixed case (e.g. 1.200,50) - complex, simplistic fallback:
-                    # Remove all dots, replace comma with dot
-                    if clean_str.rfind(',') > clean_str.rfind('.'):
-                        clean_str = clean_str.replace('.', '').replace(',', '.')
-                    else:
-                        clean_str = clean_str.replace(',', '') # 1,200.50 -> 1200.50
-                else:
-                    # Just comma (4,00) -> replace with dot
-                    clean_str = clean_str.replace(',', '.')
-            
-            return float(clean_str)
-        except ValueError:
-            logger.warning(f"Could not parse price: {price_input}")
-            return 0.0
+        super().__init__(
+            name="Business Validation Agent",
+            description="ERP Auditor. Validate invoice line items against ERP records using the validate_line_item_tool.",
+            model_id="cohere.command-r-plus-v1:0"
+        )
+        self.register_tools([validate_line_item_tool])
 
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
         self.start_as_current_observation(inputs)
@@ -57,38 +29,32 @@ class BusinessValidationAgent(Agent):
         if hasattr(data, "model_dump"):
             data = data.model_dump()
             
-        logger.info("Business Validator: Auditing Lines against ERP via MCP")
-        
-        discrepancies = []
         line_items = data.get("line_items", [])
-        
-        for item in line_items:
-            try:
-                item_code = str(item.get("item_code", "UNKNOWN"))
-                
-                # Fix: Use robust parser
-                unit_price = self._parse_price(item.get("unit_price"))
-                
-                currency = str(item.get("currency", "USD")) or "USD"
-                
-                result = self.mcp_client.call_tool(
-                    name="validate_line_item",
-                    arguments={
-                        "item_code": item_code,
-                        "unit_price": unit_price,
-                        "currency": currency
-                    }
-                )
-                
-                if result.get("status") != "match":
-                    discrepancies.append(f"{item_code}: {result.get('reason')}")
-                    
-            except Exception as e:
-                logger.error(f"MCP Call Failed for item {item.get('item_code', 'Unknown')}: {e}")
-                discrepancies.append(f"Validation Error for {item.get('item_code', 'Unknown')}")
+        if not line_items:
+             return self._create_response("match", [], data, inputs.get("context_id"))
 
-        status = "match" if not discrepancies else "mismatch"
+        task_prompt = f"""
+        Audit these Invoice Line Items against the ERP:
+        {json.dumps(line_items, indent=2)}
         
+        1. Call validate_line_item_tool for EVERY item.
+        2. If any return 'mismatch' or 'discrepancy', report it.
+        3. Summarize findings.
+        """
+
+        result = self.run_loop(task_prompt)
+        
+        final_text = result["output"].lower()
+        discrepancies = []
+        status = "match"
+        
+        if "mismatch" in final_text or "discrepancy" in final_text or "fail" in final_text:
+            status = "mismatch"
+            discrepancies.append(result["output"])
+
+        return self._create_response(status, discrepancies, data, inputs.get("context_id"))
+
+    def _create_response(self, status, discrepancies, data, context_id):
         return AgentResponse(
             id=str(uuid.uuid4()),
             timestamp=datetime.now(timezone.utc).isoformat(),
@@ -100,5 +66,5 @@ class BusinessValidationAgent(Agent):
                 "discrepancies": discrepancies,
                 "validated_data": data
             },
-            context_id=inputs.get("context_id")
+            context_id=context_id
         )
