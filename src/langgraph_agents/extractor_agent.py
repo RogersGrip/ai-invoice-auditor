@@ -28,19 +28,17 @@ class ExtractorAgent(Agent):
                 payload={"error": "File path missing"},
                 context_id=inputs.get("context_id")
             )
-
-        logger.info(f"Extractor Agent: Processing {file_path}")
-
-        try:
-            # 1. Run Extraction
-            raw_text = self.harvester_tool.run(file_path)
             
-            # 2. Return Result
+        logger.info(f"Extractor Agent: Processing {file_path}")
+        try:
+            # FIX: Pass dictionary args to match tool signature
+            raw_text = self.harvester_tool.run({"file_path": file_path})
+            
             return AgentResponse(
                 id=str(uuid.uuid4()),
                 timestamp=datetime.now(timezone.utc).isoformat(),
                 source_agent=self.name,
-                target_agent="Safety Agent", # Hand off to Safety next
+                target_agent="Safety Agent",
                 message_type="TASK_HANDOFF",
                 payload={
                     "raw_text": raw_text,
@@ -49,7 +47,6 @@ class ExtractorAgent(Agent):
                 },
                 context_id=inputs.get("context_id")
             )
-
         except Exception as e:
             logger.error(f"Extraction Error: {e}")
             return AgentResponse(

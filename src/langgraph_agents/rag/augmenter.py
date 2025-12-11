@@ -12,47 +12,25 @@ class AugmentationAgent(Agent):
     def __init__(self):
         self.ranker_tool = ChunkRankerTool()
 
-    @property
-    def inputs_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "docs": {"type": "array"}
-            }
-        }
-
-    @property
-    def outputs_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "context": {"type": "string"},
-                "query": {"type": "string"}
-            }
-        }
-
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
-        """
-        Expects: 'docs' or 'retrieved_docs' (list of dicts)
-        """
         self.start_as_current_observation(inputs)
+        
         docs = inputs.get("docs") or inputs.get("retrieved_docs") or inputs.get("payload", {}).get("retrieved_docs", [])
         
         if not docs:
-             return AgentResponse(
-                 id=str(uuid.uuid4()),
-                 source_agent=self.name,
-                 timestamp=datetime.now().isoformat(),
-                 target_agent="Error Handler",
-                 message_type="ERROR",
-                 payload={"error": "No docs to rank"},
-                 context_id=inputs.get("context_id")
-             )
+            return AgentResponse(
+                id=str(uuid.uuid4()),
+                source_agent=self.name,
+                timestamp=datetime.now().isoformat(),
+                target_agent="Error Handler",
+                message_type="ERROR",
+                payload={"error": "No docs to rank"},
+                context_id=inputs.get("context_id")
+            )
 
         logger.info(f"Augmentation Agent: Reranking {len(docs)} docs")
-        
-        # Tool Call
-        context_str = self.ranker_tool.run(docs)
+        # FIX: Pass dictionary args
+        context_str = self.ranker_tool.run({"docs": docs})
         
         return AgentResponse(
             id=str(uuid.uuid4()),

@@ -12,56 +12,33 @@ class IndexingAgent(Agent):
     def __init__(self):
         self.indexer_tool = VectorIndexerTool()
 
-    @property
-    def inputs_schema(self) -> Dict[str, Any]:
-        return {
-             "type": "object",
-             "properties": {
-                 "text": {"type": "string"},
-                 "filename": {"type": "string"},
-                 "metadata": {"type": "object"}
-             }
-        }
-
-    @property
-    def outputs_schema(self) -> Dict[str, Any]:
-        return {
-             "type": "object",
-             "properties": {
-                 "chunks_indexed": {"type": "integer"}
-             }
-        }
-
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
-        """
-        Expects keys: 'text', 'filename', 'metadata'
-        """
         self.start_as_current_observation(inputs)
+        
         text = inputs.get("text", "")
         filename = inputs.get("filename", "unknown")
         meta = inputs.get("metadata", {})
         
         if not text:
              return AgentResponse(
-                 id=str(uuid.uuid4()),
-                 source_agent=self.name,
-                 timestamp=datetime.now().isoformat(),
-                 target_agent="Error Handler",
-                 message_type="ERROR",
-                 payload={"error": "No text to index"},
-                 context_id=inputs.get("context_id")
-             )
+                id=str(uuid.uuid4()),
+                source_agent=self.name,
+                timestamp=datetime.now().isoformat(),
+                target_agent="Error Handler",
+                message_type="ERROR",
+                payload={"error": "No text to index"},
+                context_id=inputs.get("context_id")
+            )
 
         logger.info(f"Indexing Agent: Processing {filename}")
-        
         try:
-            indexed_count = self.indexer_tool.run(text, metadata={
-                "filename": filename,
-                **meta
+            # FIX: Pass dictionary args
+            indexed_count = self.indexer_tool.run({
+                "text": text, 
+                "metadata": {"filename": filename, **meta}
             })
             
             logger.success(f"Indexed {indexed_count} chunks for {filename}")
-            
             return AgentResponse(
                 id=str(uuid.uuid4()),
                 source_agent=self.name,
@@ -74,11 +51,11 @@ class IndexingAgent(Agent):
         except Exception as e:
             logger.error(f"Indexing Error: {e}")
             return AgentResponse(
-                 id=str(uuid.uuid4()),
-                 source_agent=self.name,
-                 timestamp=datetime.now().isoformat(),
-                 target_agent="Error Handler",
-                 message_type="ERROR",
-                 payload={"error": str(e)},
-                 context_id=inputs.get("context_id")
-             )
+                id=str(uuid.uuid4()),
+                source_agent=self.name,
+                timestamp=datetime.now().isoformat(),
+                target_agent="Error Handler",
+                message_type="ERROR",
+                payload={"error": str(e)},
+                context_id=inputs.get("context_id")
+            )

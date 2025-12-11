@@ -1,64 +1,103 @@
-import uuid
+# ===== FILE: src/adk_agents/business_validator_agent.py =====
 import json
+import uuid
+import os
 from typing import Dict, Any
 from datetime import datetime, timezone
-from langchain_core.tools import tool
-from src.adk_agents.base_adk import ADKAgent
+
+# --- ADK Framework Imports ---
+from src.frameworks.google_adk.agents import Agent as ADKAgent
+from src.frameworks.google_adk.models import LiteLlm
+from src.frameworks.google_adk.tools import BaseTool
+
+# --- Project Imports ---
 from src.core.protocol import AgentResponse
 from src.mcp_server.erp import logic_validate_line_item
 
-@tool
-def validate_line_item_tool(item_code: str, unit_price: float, currency: str = "USD") -> str:
-    """Validates a single line item against the ERP system. Returns JSON status."""
-    res = logic_validate_line_item(item_code, unit_price, currency)
-    return json.dumps(res)
-
-class BusinessValidationAgent(ADKAgent):
+# 1. Define the specific Tool for this Agent
+class ValidateLineItemTool(BaseTool):
     def __init__(self):
         super().__init__(
-            name="Business Validation Agent",
-            description="ERP Auditor. Validate invoice line items against ERP records using the validate_line_item_tool.",
-            model_id="cohere.command-r-plus-v1:0"
+            name="validate_line_item",
+            description="Validates a single invoice line item against ERP records. Arguments: item_code (str), unit_price (float), currency (str)."
         )
-        self.register_tools([validate_line_item_tool])
+    
+    def run(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        return logic_validate_line_item(
+            item_code=args.get("item_code"),
+            unit_price=float(args.get("unit_price", 0)),
+            currency=args.get("currency", "USD")
+        )
 
-    def process(self, inputs: Dict[str, Any]) -> AgentResponse:
-        self.start_as_current_observation(inputs)
+# 2. The Business Validator Agent Wrapper
+class BusinessValidationAgent:
+    def __init__(self):
+        # Configure the ADK Model
+        self.model = LiteLlm(
+            model="bedrock/cohere.command-r-plus-v1:0",
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+            aws_region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+        )
         
-        data = inputs.get("validated_data") or inputs.get("extracted_data", {})
-        if hasattr(data, "model_dump"):
-            data = data.model_dump()
-            
-        line_items = data.get("line_items", [])
-        if not line_items:
-             return self._create_response("match", [], data, inputs.get("context_id"))
+        # Instantiate the ADK Agent
+        self.adk_agent = ADKAgent(
+            name="Business Validation Agent",
+            model=self.model,
+            instruction=(
+                "You are an expert ERP Auditor. Your task is to validate invoice line items using the 'validate_line_item' tool. "
+                "For every line item provided in the input list, you MUST call the validation tool. "
+                "After validating all items, summarize the results. If any item fails validation, mark the status as mismatch."
+            ),
+            tools=[ValidateLineItemTool()]
+        )
 
+    async def process_async(self, inputs: Dict[str, Any]) -> AgentResponse:
+        """
+        Asynchronous processing that delegates to the ADK agent.
+        """
+        data = inputs.get("validated_data") or inputs.get("extracted_data", {})
+        line_items = data.get("line_items", [])
+        context_id = inputs.get("context_id", str(uuid.uuid4()))
+
+        if not line_items:
+             return self._create_response("match", [], data, context_id)
+
+        # Create the prompt for the ADK Agent
         task_prompt = f"""
-        Audit these Invoice Line Items against the ERP:
+        Here is the list of invoice line items to audit:
         {json.dumps(line_items, indent=2)}
         
-        1. Call validate_line_item_tool for EVERY item.
-        2. If any return 'mismatch' or 'discrepancy', report it.
-        3. Summarize findings.
+        Please validate every single item against the ERP system.
         """
-
-        result = self.run_loop(task_prompt)
         
-        final_text = result["output"].lower()
-        discrepancies = []
+        # Execute the ADK Agent
+        # The agent will use its LLM + Tools to process the request
+        result_text = await self.adk_agent.process(task_prompt)
+        
+        # Parse the Agent's natural language response to determine structured status
         status = "match"
+        discrepancies = []
         
-        if "mismatch" in final_text or "discrepancy" in final_text or "fail" in final_text:
+        lower_result = result_text.lower()
+        if "mismatch" in lower_result or "discrepancy" in lower_result or "failed" in lower_result:
             status = "mismatch"
-            discrepancies.append(result["output"])
+            discrepancies.append(result_text) # Use the agent's summary as the discrepancy detail
 
-        return self._create_response(status, discrepancies, data, inputs.get("context_id"))
+        return self._create_response(status, discrepancies, data, context_id)
+
+    def process(self, inputs: Dict[str, Any]) -> AgentResponse:
+        """
+        Synchronous wrapper for compatibility with the existing graph pipeline.
+        """
+        import asyncio
+        return asyncio.run(self.process_async(inputs))
 
     def _create_response(self, status, discrepancies, data, context_id):
         return AgentResponse(
             id=str(uuid.uuid4()),
             timestamp=datetime.now(timezone.utc).isoformat(),
-            source_agent=self.name,
+            source_agent="Business Validation Agent",
             target_agent="Reporting Agent",
             message_type="TASK_HANDOFF",
             payload={

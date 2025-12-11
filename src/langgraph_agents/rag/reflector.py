@@ -3,7 +3,6 @@ import uuid
 import json
 from datetime import datetime
 from src.core.protocol import Agent, AgentResponse
-from src.core.config import settings
 from src.core.logger import logger
 from src.tools.tools import RAGEvaluatorTool
 from src.langgraph_agents.rag.mlflow_evaluator import MLflowEvaluator
@@ -18,6 +17,7 @@ class ReflectionAgent(Agent):
 
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
         self.start_as_current_observation(inputs)
+        
         payload = inputs.get("payload", {})
         query = inputs.get("query") or payload.get("query")
         answer = inputs.get("answer") or payload.get("answer")
@@ -36,23 +36,23 @@ class ReflectionAgent(Agent):
 
         logger.info("Reflection Agent: Evaluating Response Quality...")
         metrics = {}
-
-        # 1. Try Ragas
+        
         try:
             logger.info("Attempt 1: Ragas Evaluation")
-            content = self.ragas_tool.run(query, answer, context)
+            # FIX: Pass dictionary args
+            content = self.ragas_tool.run({
+                "query": query, 
+                "answer": answer, 
+                "context": context
+            })
             metrics = json.loads(content)
             
-            # Check for error or zero scores indicating failure
             if "error" in metrics or all(v == 0.0 for v in metrics.values() if isinstance(v, (int, float))):
                 raise ValueError("Ragas returned zeros or error.")
             
             metrics["source"] = "Ragas"
-            
         except Exception as e:
             logger.warning(f"Ragas failed ({e}). Trying MLflow Fallback...")
-            
-            # 2. Try MLflow Fallback
             try:
                 metrics = self.mlflow_eval.evaluate(query, answer, context)
                 metrics["source"] = "MLflow Fallback"
@@ -64,9 +64,8 @@ class ReflectionAgent(Agent):
                     "source": "Hard Fallback",
                     "reason": "All evaluators failed."
                 }
-
-        logger.info(f"Final Metrics: {metrics}")
         
+        logger.info(f"Final Metrics: {metrics}")
         return AgentResponse(
             id=str(uuid.uuid4()),
             source_agent=self.name,

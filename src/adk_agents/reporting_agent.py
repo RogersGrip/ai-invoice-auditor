@@ -1,31 +1,30 @@
-from typing import Dict, Any
 import uuid
+from typing import Dict, Any
 from datetime import datetime, timezone
-from src.core.protocol import Agent, AgentResponse
+
+from src.frameworks.google_adk import ADKAgent
+from src.core.protocol import AgentResponse
 from src.core.logger import logger
 from src.tools.tools import InsightReporterTool
 
-class ReportingAgent(Agent):
-    name = "Reporting Agent"
-    description = "Generates final reports."
-
+class ReportingAgent(ADKAgent):
     def __init__(self):
+        super().__init__(name="Reporting Agent", model=None, instruction="Generate final reports.")
         self.reporter_tool = InsightReporterTool()
 
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
-        self.start_as_current_observation(inputs)
-        
         file_name = inputs.get("file_name", "report")
         
         try:
-            output_paths = self.reporter_tool.run(
-                file_name=file_name,
-                extracted_data=inputs.get("extracted_data", {}),
-                validation_report=inputs.get("validation_results", {}),
-                safety_report=inputs.get("safety_report", {}),
-                metadata=inputs.get("metadata", {})
-            )
-
+            # FIX: Pass dictionary args
+            output_paths = self.reporter_tool.run({
+                "file_name": file_name,
+                "extracted_data": inputs.get("extracted_data", {}),
+                "validation_report": inputs.get("validation_results", {}),
+                "safety_report": inputs.get("safety_report", {}),
+                "metadata": inputs.get("metadata", {})
+            })
+            
             return AgentResponse(
                 id=str(uuid.uuid4()),
                 source_agent=self.name,
