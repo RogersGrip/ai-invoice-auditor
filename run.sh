@@ -24,7 +24,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo -e "${CYAN}Starting A2A Backend Server (Port 8000)...${NC}"
-python src/server.py &
+python -W ignore src/server.py &
 BACKEND_PID=$!
 
 cleanup() {

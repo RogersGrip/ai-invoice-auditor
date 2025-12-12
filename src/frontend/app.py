@@ -85,7 +85,7 @@ with tab1:
     c1, c2 = st.columns([1, 2])
     with c1:
         st.subheader("Upload Invoice")
-        uploaded = st.file_uploader("Drop PDF/Image", type=["pdf", "png", "jpg"], accept_multiple_files=True)
+        uploaded = st.file_uploader("Drop PDF/Image", type=["pdf", "png", "jpg", ".json", ".meta.json"], accept_multiple_files=True)
         if uploaded and st.button(f"Process {len(uploaded)} Files"):
             progress_bar = st.progress(0)
             status_text = st.empty()

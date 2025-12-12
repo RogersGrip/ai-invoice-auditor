@@ -42,14 +42,12 @@ async def run_workflow_async(task_id: str, file_path: str):
     """
     fname = os.path.basename(file_path)
     
-    # 1. Deduplication check (In-memory only)
     if fname in processing_files: 
         return
         
     processing_files.add(fname)
     logger.info(f"🚀 Starting Workflow for: {fname} (ID: {task_id})")
     
-    # 2. Setup State
     config = {"configurable": {"thread_id": task_id}}
     metadata = {"source": "monitor"}
     try:
@@ -67,24 +65,28 @@ async def run_workflow_async(task_id: str, file_path: str):
         status=ProcessingStatus.PENDING
     )
 
-    # 3. Run Graph
     try:
         if not graph_app:
             logger.error("Graph not initialized!")
             return
 
-        # Execute Async
-        final_state = await graph_app.ainvoke(initial_state, config=config)
+        final_state = await asyncio.wait_for(
+            graph_app.ainvoke(initial_state, config=config),
+            timeout=60.0
+        )
         logger.info(f"🏁 Workflow Finished | {fname} | Status: {final_state.get('status')}")
         
-    except Exception as e:
-        logger.error(f"❌ Workflow Critical Failure | {fname} | Error: {e}")
-        # Move to failed to prevent infinite loop
+    except asyncio.TimeoutError:
+        logger.error(f"⏱️ Workflow Timed Out (60s) | {fname}")
         try:
             shutil.move(file_path, str(FAILED_DIR / fname))
-            logger.warning(f"Moved {fname} to failed folder.")
-        except Exception as mv_err:
-            logger.error(f"Failed to move poison file: {mv_err}")
+        except: pass
+
+    except Exception as e:
+        logger.error(f"❌ Workflow Critical Failure | {fname} | Error: {e}")
+        try:
+            shutil.move(file_path, str(FAILED_DIR / fname))
+        except: pass
             
     finally:
         if fname in processing_files:
@@ -92,67 +94,33 @@ async def run_workflow_async(task_id: str, file_path: str):
 
 
 async def monitor_loop():
-    """
-    Async Monitor Loop running on the main event loop.
-    """
     logger.info("📂 Invoice Monitor Started (Async)...")
-    logger.info(f"Watching: {monitor_agent.watch_dir.resolve()}")
-    
     while True:
         try:
-            # 1. Scan for new files
             jobs = monitor_agent.scan()
-            
-            if jobs:
-                # Debug logging for internal state
-                if processing_files:
-                    logger.info(f"⏳ Currently processing: {list(processing_files)}")
-            
             for job in jobs:
                 fpath = job.get("file_path")
                 fname = os.path.basename(fpath)
                 
-                # Check existence
-                if not os.path.exists(fpath): 
-                    continue
+                if not os.path.exists(fpath): continue
+                if fname in processing_files: continue
                 
-                # Check In-Progress
-                if fname in processing_files:
-                    continue
-                
-                logger.info(f"♻️  Processing found file: {fname}")
+                logger.info(f"♻️  Found new file: {fname}")
                 asyncio.create_task(run_workflow_async(fname, fpath))
             
             await asyncio.sleep(5)
-            
-        except asyncio.CancelledError:
-            logger.info("Monitor loop cancelled.")
-            break
-        except Exception as e:
-            logger.error(f"Monitor Loop Error: {e}")
-            await asyncio.sleep(5)
+        except asyncio.CancelledError: break
+        except Exception: await asyncio.sleep(5)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global graph_app, monitor_task
-    
-    # Initialize Graph
     graph_app = create_invoice_graph()
     logger.info("✅ Orchestrator Graph Initialized")
-    
-    # Start Monitor
     monitor_task = asyncio.create_task(monitor_loop())
-    
     yield
-    
-    # Shutdown
     logger.info("Shutting down...")
-    if monitor_task:
-        monitor_task.cancel()
-        try:
-            await monitor_task
-        except asyncio.CancelledError:
-            pass
+    if monitor_task: monitor_task.cancel()
 
 app = FastAPI(title="AI Invoice Auditor A2A Server", version="1.0.0", lifespan=lifespan)
 
@@ -161,7 +129,7 @@ async def send_message(request: SendMessageRequest, background_tasks: Background
     msg = request.message
     context_id = msg.contextId or str(uuid.uuid4())
     
-    # 1. Handle File Trigger
+    # 1. File Trigger
     tasks_created = []
     for part in msg.parts:
         if part.file:
@@ -169,13 +137,11 @@ async def send_message(request: SendMessageRequest, background_tasks: Background
             fname = part.file.name
             if fname.endswith(".meta.json"): continue
             
+            input_file = str(settings.INVOICE_WATCH_DIR / fname)
             if part.file.fileWithUri and part.file.fileWithUri.startswith("file://"):
                 input_file = part.file.fileWithUri.replace("file://", "")
-            else:
-                input_file = str(settings.INVOICE_WATCH_DIR / fname)
-            
-            if not os.path.exists(input_file):
-                await asyncio.sleep(1) 
+                
+            if not os.path.exists(input_file): await asyncio.sleep(1) 
             
             if fname in processing_files:
                 tasks_created.append(task_id)
@@ -188,7 +154,7 @@ async def send_message(request: SendMessageRequest, background_tasks: Background
     if tasks_created:
         return SendMessageResponse(task=Task(id=tasks_created[0], contextId=context_id, status=TaskStatus(state=TaskState.SUBMITTED)))
 
-    # 2. Handle RAG
+    # 2. RAG
     input_text = next((p.text for p in msg.parts if p.text), None)
     if input_text:
         try:
@@ -196,68 +162,56 @@ async def send_message(request: SendMessageRequest, background_tasks: Background
             rag = create_rag_graph()
             res = await rag.ainvoke({"query": input_text})
             
+            # FIXED: Safe access to response fields to prevent 500 Error
+            answer = res.get("answer") or "I could not generate an answer based on the retrieved documents."
+            eval_metrics = res.get("evaluation") or {}
+            
+            full_text = f"{answer}\n\nMetrics: {eval_metrics}"
+            
             return SendMessageResponse(message=Message(
                 messageId=str(uuid.uuid4()),
                 role=Role.AGENT,
                 contextId=context_id,
-                parts=[Part(text=res.get("answer", "No answer.") + "\n\n" + str(res.get("evaluation", "")))]
+                parts=[Part(text=full_text)]
             ))
         except Exception as e:
             logger.error(f"RAG Error: {e}")
-            raise HTTPException(status_code=500, detail=f"RAG Error: {e}")
+            # Return error as message instead of crashing
+            return SendMessageResponse(message=Message(
+                messageId=str(uuid.uuid4()),
+                role=Role.AGENT,
+                contextId=context_id,
+                parts=[Part(text=f"System Error: {str(e)}")]
+            ))
 
-    return SendMessageResponse(message=Message(
-        messageId=str(uuid.uuid4()),
-        role=Role.AGENT,
-        parts=[Part(text="Request received.")]
-    ))
+    return SendMessageResponse(message=Message(messageId=str(uuid.uuid4()), role=Role.AGENT, parts=[Part(text="Request received.")]))
 
-# --- HITL Approval Endpoint ---
 @app.post("/v1/approve")
 async def approve_invoice(payload: dict = Body(...)):
-    """
-    Manually approves an invoice report.
-    Payload: {"file_name": "...", "comment": "..."}
-    """
     file_name = payload.get("file_name")
     comment = payload.get("comment", "Manual Approval")
-    
     if not file_name: raise HTTPException(400, "file_name required")
-    
-    # Try finding the report (might be simple name or timestamped name)
-    # We look for any report ending with this stem
     base = Path(file_name).stem
     report_path = settings.OUTPUT_DIR / f"{base}_report.json"
     
     if not report_path.exists():
-        # Fallback: search for partial match
         candidates = list(settings.OUTPUT_DIR.glob(f"*{base}*_report.json"))
-        if candidates:
-            report_path = candidates[0]
-        else:
-            raise HTTPException(404, "Report not found")
+        if candidates: report_path = candidates[0]
+        else: raise HTTPException(404, "Report not found")
         
     try:
-        with open(report_path, 'r') as f:
-            data = json.load(f)
-        
-        # Update Status
+        with open(report_path, 'r') as f: data = json.load(f)
         data['meta']['status'] = "APPROVED"
         data['meta']['approval_comment'] = comment
         data['meta']['approval_timestamp'] = datetime.now().isoformat()
-        
-        with open(report_path, 'w') as f:
-            json.dump(data, f, indent=2)
-            
+        with open(report_path, 'w') as f: json.dump(data, f, indent=2)
         logger.info(f"✅ Manually Approved: {file_name}")
         return {"status": "success", "message": f"Approved {file_name}"}
     except Exception as e:
-        logger.error(f"Approval Failed: {e}")
         raise HTTPException(500, str(e))
 
 @app.get("/health")
-def health():
-    return {"status": "ok"}
+def health(): return {"status": "ok"}
 
 if __name__ == "__main__":
-    uvicorn.run("src.server:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("src.server:app", host="0.0.0.0", port=8000, reload=False)

@@ -10,13 +10,14 @@ class Settings(BaseSettings):
     
     MODEL_PROVIDER: Literal["bedrock", "ollama"] = "bedrock"
     
-    # Using verified model ID
+    # Models
     TRANSLATION_MODEL: str = "cohere.command-r-plus-v1:0"
     VALIDATION_MODEL: str = "cohere.command-r-plus-v1:0"
     REPORTING_MODEL: str = "cohere.command-r-plus-v1:0"
     SAFETY_MODEL: str = "cohere.command-r-plus-v1:0"
     
-    EMBEDDING_MODEL: str = "amazon.titan-embed-text-v1"
+    # CHANGED: Titan was denied, switching to Cohere Embeddings which should match your model permissions
+    EMBEDDING_MODEL: str = "cohere.embed-english-v3"
     
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3"
