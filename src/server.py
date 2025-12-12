@@ -104,7 +104,9 @@ async def monitor_loop():
             jobs = monitor_agent.scan()
             
             if jobs:
-                logger.info(f"🔎 Monitor found {len(jobs)} candidates.")
+                # Debug logging for internal state
+                if processing_files:
+                    logger.info(f"⏳ Currently processing: {list(processing_files)}")
             
             for job in jobs:
                 fpath = job.get("file_path")
