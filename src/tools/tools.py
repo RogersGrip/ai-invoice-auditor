@@ -37,9 +37,7 @@ from ragas.embeddings import LangchainEmbeddingsWrapper
 from datasets import Dataset
 
 # --- Suppress Noise ---
-import warnings
-warnings.filterwarnings('ignore')
-# warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # --- Observability ---
 try:
@@ -87,7 +85,7 @@ class BusinessValidationTool(BaseTool):
     def run(self, args): return {"status": "placeholder"}
 
 # ==============================================================================
-# UPDATED: Insight Reporter Tool (High Fidelity PDF)
+# UPDATED: Insight Reporter Tool (Detailed PDF)
 # ==============================================================================
 class InsightReporterTool(BaseTool):
     def __init__(self):
@@ -102,10 +100,11 @@ class InsightReporterTool(BaseTool):
     def _sanitize(self, text: Any) -> str:
         if text is None: return "N/A"
         text = str(text)
-        # Basic Latin-1 conversion for FPDF compatibility
+        # Handle common currency/special chars
         replacements = {"€": "EUR", "£": "GBP", "¥": "JPY", "₹": "INR", "‘": "'", "’": "'", "“": '"', "”": '"'}
         for char, repl in replacements.items():
             text = text.replace(char, repl)
+        # Force Latin-1 for FPDF
         return text.encode('latin-1', 'replace').decode('latin-1')
 
     def run(self, args: Dict[str, Any]) -> Dict[str, str]:
@@ -124,6 +123,7 @@ class InsightReporterTool(BaseTool):
         elif validation_report and not validation_report.get("is_valid"): status = "DATA_INVALID"
         elif validation_report.get("business_status") == "mismatch": status = "BUSINESS_MISMATCH"
 
+        # Save JSON
         report_data = {
             "meta": {
                 "file_name": file_name,
@@ -138,17 +138,18 @@ class InsightReporterTool(BaseTool):
         with open(json_path, 'w') as f:
             json.dump(report_data, f, indent=2)
 
+        # Generate PDF
         try:
             pdf = FPDF()
             pdf.add_page()
             
-            # --- Header ---
+            # 1. Header
             pdf.set_fill_color(240, 248, 255)
             pdf.set_font("Arial", 'B', 16)
             pdf.cell(0, 15, "AI Invoice Auditor Report", ln=1, align='C', fill=True, border=1)
             pdf.ln(5)
 
-            # --- Meta Info ---
+            # 2. Metadata
             pdf.set_font("Arial", 'B', 10)
             pdf.cell(30, 6, "File Name:", border=0)
             pdf.set_font("Arial", '', 10)
@@ -157,66 +158,62 @@ class InsightReporterTool(BaseTool):
             pdf.set_font("Arial", 'B', 10)
             pdf.cell(30, 6, "Status:", border=0)
             
-            # Color coding status text
             if status == "COMPLETED": pdf.set_text_color(0, 128, 0) # Green
-            elif status == "FLAGGED": pdf.set_text_color(200, 0, 0) # Red
+            elif status in ["FLAGGED", "DATA_INVALID"]: pdf.set_text_color(200, 0, 0) # Red
             else: pdf.set_text_color(255, 140, 0) # Orange
             
             pdf.cell(0, 6, status, border=0, ln=1)
-            pdf.set_text_color(0, 0, 0) # Reset
-            
-            pdf.set_font("Arial", 'B', 10)
-            pdf.cell(30, 6, "Timestamp:", border=0)
-            pdf.set_font("Arial", '', 10)
-            pdf.cell(0, 6, datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"), border=0, ln=1)
+            pdf.set_text_color(0, 0, 0) # Reset Black
             pdf.ln(5)
 
-            # --- Extracted Data ---
+            # 3. Invoice Details
             pdf.set_fill_color(230, 230, 250)
             pdf.set_font("Arial", 'B', 12)
             pdf.cell(0, 8, " Extracted Invoice Data", ln=1, fill=True, border=1)
             pdf.set_font("Arial", '', 10)
+            pdf.ln(2)
             
-            # Key Fields
+            # Simple Key-Value
             fields = ["invoice_no", "invoice_date", "vendor_id", "total_amount", "currency"]
             for field in fields:
                 val = extracted_data.get(field, "N/A")
                 pdf.cell(40, 6, field.replace("_", " ").title(), border=1)
                 pdf.cell(0, 6, self._sanitize(val), border=1, ln=1)
-            
             pdf.ln(2)
             
-            # Line Items
+            # Line Items Table
             items = extracted_data.get("line_items", [])
             if items:
                 pdf.set_font("Arial", 'B', 10)
                 pdf.cell(0, 6, f"Line Items ({len(items)})", ln=1)
                 pdf.set_font("Arial", '', 9)
                 
-                # Table Header
+                # Header
                 pdf.set_fill_color(245, 245, 245)
-                pdf.cell(80, 6, "Description / Code", border=1, fill=True)
+                pdf.cell(90, 6, "Description / Code", border=1, fill=True)
                 pdf.cell(20, 6, "Qty", border=1, fill=True)
-                pdf.cell(30, 6, "Unit Price", border=1, fill=True)
+                pdf.cell(30, 6, "Price", border=1, fill=True)
                 pdf.cell(30, 6, "Total", border=1, fill=True, ln=1)
                 
+                # Rows
                 for item in items:
                     desc = item.get("item_code") or item.get("description") or "Item"
                     qty = str(item.get("qty", 0))
                     price = str(item.get("unit_price", 0))
                     total = str(item.get("total", 0))
                     
-                    pdf.cell(80, 6, self._sanitize(desc[:40]), border=1)
+                    pdf.cell(90, 6, self._sanitize(desc[:50]), border=1)
                     pdf.cell(20, 6, qty, border=1)
                     pdf.cell(30, 6, price, border=1)
                     pdf.cell(30, 6, total, border=1, ln=1)
             pdf.ln(5)
 
-            # --- Validation Results ---
+            # 4. Audit Results
             pdf.set_fill_color(255, 250, 205)
             pdf.set_font("Arial", 'B', 12)
-            pdf.cell(0, 8, " Audit Results", ln=1, fill=True, border=1)
+            pdf.cell(0, 8, " Validation & Audit", ln=1, fill=True, border=1)
             pdf.set_font("Arial", '', 10)
+            pdf.ln(2)
             
             valid = validation_report.get("is_valid", False)
             biz_status = validation_report.get("business_status", "N/A")
@@ -224,24 +221,23 @@ class InsightReporterTool(BaseTool):
             pdf.cell(50, 6, "Data Integrity:", border=1)
             pdf.cell(0, 6, "PASS" if valid else "FAIL", border=1, ln=1)
             
-            pdf.cell(50, 6, "Business Logic:", border=1)
+            pdf.cell(50, 6, "ERP Match:", border=1)
             pdf.cell(0, 6, self._sanitize(biz_status.upper()), border=1, ln=1)
             
             discrepancies = validation_report.get("discrepancies", [])
-            if discrepancies:
+            missing = validation_report.get("missing_fields", [])
+            
+            if discrepancies or missing:
                 pdf.ln(2)
                 pdf.set_text_color(200, 0, 0)
                 pdf.set_font("Arial", 'B', 10)
-                pdf.cell(0, 6, "Discrepancies Found:", ln=1)
+                pdf.cell(0, 6, "Issues Found:", ln=1)
                 pdf.set_font("Arial", '', 10)
                 for d in discrepancies:
                     pdf.multi_cell(0, 6, f"- {self._sanitize(d)}")
+                for m in missing:
+                    pdf.multi_cell(0, 6, f"- Missing Field: {self._sanitize(m)}")
                 pdf.set_text_color(0, 0, 0)
-
-            # --- Footer ---
-            pdf.set_y(-20)
-            pdf.set_font("Arial", 'I', 8)
-            pdf.cell(0, 10, f"Generated by AI Invoice Auditor on {datetime.now().strftime('%Y-%m-%d')}", align='C')
 
             pdf.output(str(pdf_path))
         except Exception as e:
@@ -272,9 +268,6 @@ class ResponseSynthesizerTool(BaseTool):
     def _get_declaration(self): return FunctionDeclaration(name=self.name, description=self.description, parameters=Schema(type=Type.OBJECT, properties={"query": Schema(type=Type.STRING), "context": Schema(type=Type.STRING)}, required=["query", "context"]))
     def run(self, args): return BedrockLLMService(model_id=settings.REPORTING_MODEL).invoke(f"Context:\n{args.get('context')}\n\nQuestion: {args.get('query')}")
 
-# ==============================================================================
-# UPDATED: RAG Evaluator Tool (5 Metrics)
-# ==============================================================================
 class RAGEvaluatorTool(BaseTool):
     def __init__(self): super().__init__(name="rag_evaluator_tool", description="Evaluates RAG.")
     def _get_declaration(self): return FunctionDeclaration(name=self.name, description=self.description, parameters=Schema(type=Type.OBJECT, properties={"query": Schema(type=Type.STRING)}, required=["query"]))
@@ -291,25 +284,18 @@ class RAGEvaluatorTool(BaseTool):
                 region_name="us-east-1"
             ))
 
-            # Add ground_truth to prevent recall/correctness crashes
             data = {
                 "question": [args["query"]], 
                 "answer": [args["answer"]], 
                 "contexts": [[args["context"]]],
-                "ground_truth": [args["answer"]] # Self-consistency check if not provided
+                "ground_truth": [args["answer"]] # Placeholder for consistency
             }
             dataset = Dataset.from_dict(data)
             
-            # Requested "All 5 Metrics"
+            # --- 5 METRICS ---
             res = evaluate(
                 dataset=dataset, 
-                metrics=[
-                    faithfulness, 
-                    answer_relevancy, 
-                    context_precision, 
-                    context_recall, 
-                    answer_correctness
-                ], 
+                metrics=[faithfulness, answer_relevancy, context_precision, context_recall, answer_correctness], 
                 llm=eval_llm, 
                 embeddings=eval_embeddings, 
                 raise_exceptions=False
@@ -317,9 +303,8 @@ class RAGEvaluatorTool(BaseTool):
             
             df = res.to_pandas()
             if df.empty: return json.dumps({"status": "empty_eval"})
-                
+            
             row = df.iloc[0].to_dict()
-            # Filter numeric scores
             metrics = {k: (float(v) if v == v else 0.0) for k, v in row.items() 
                        if isinstance(v, (int, float)) and k not in ["question", "answer", "contexts", "ground_truth"]}
             
