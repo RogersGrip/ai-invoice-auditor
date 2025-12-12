@@ -1,0 +1,23 @@
+{
+  "file_name": "invoice_sample_002.pdf",
+  "timestamp": "20251212_062124",
+  "extracted_data": {
+    "invoice_number": "INV-2024-002",
+    "total_amount": 2500.0
+  },
+  "validation_report": {
+    "business_validation_status": "mismatch",
+    "discrepancies": [
+      "Item ITEM003: Unit price mismatch (expected 150.00, got 200.00)",
+      "Item ITEM004: Invalid item code"
+    ],
+    "validation_summary": "Found 2 discrepancies during validation"
+  },
+  "safety_report": {
+    "status": "safe",
+    "checks_passed": [
+      "malware_scan"
+    ]
+  },
+  "metadata": {}
+}

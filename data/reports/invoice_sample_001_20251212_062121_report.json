@@ -1,0 +1,48 @@
+{
+  "file_name": "invoice_sample_001.pdf",
+  "timestamp": "20251212_062121",
+  "extracted_data": {
+    "invoice_number": "INV-2024-001",
+    "date": "2024-12-12",
+    "vendor": "ABC Corporation",
+    "total_amount": 1500.0,
+    "currency": "USD",
+    "line_items": [
+      {
+        "item_code": "ITEM001",
+        "description": "Widget A",
+        "quantity": 10,
+        "unit_price": 100.0,
+        "amount": 1000.0
+      },
+      {
+        "item_code": "ITEM002",
+        "description": "Widget B",
+        "quantity": 5,
+        "unit_price": 100.0,
+        "amount": 500.0
+      }
+    ]
+  },
+  "validation_report": {
+    "business_validation_status": "match",
+    "discrepancies": [],
+    "validation_summary": "All items validated successfully"
+  },
+  "safety_report": {
+    "status": "safe",
+    "checks_passed": [
+      "malware_scan",
+      "file_integrity"
+    ]
+  },
+  "metadata": {
+    "processing_time": "2.5s",
+    "agent_chain": [
+      "Monitor",
+      "Extractor",
+      "Validator",
+      "Reporter"
+    ]
+  }
+}

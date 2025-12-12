@@ -5,7 +5,11 @@ import json
 import sys
 import requests
 from pathlib import Path
+from typing import Tuple, Dict, Any
 
+# -------------------------------------------------------------
+# Environment Setup
+# -------------------------------------------------------------
 current_dir = Path(__file__).resolve().parent
 project_root = current_dir.parent.parent
 if str(project_root) not in sys.path:
@@ -15,214 +19,333 @@ from src.core.config import settings
 
 API_URL = "http://localhost:8000"
 
-st.set_page_config(page_title="AI Invoice Auditor", page_icon="🛡️", layout="wide")
-st.title("🛡️ AI Invoice Auditor & Safety Guard")
+st.set_page_config(page_title="AI Invoice Auditor", layout="wide")
 
-def trigger_processing(file_path):
+
+# -------------------------------------------------------------
+# Utility Functions
+# -------------------------------------------------------------
+def backend_health() -> bool:
     try:
-        try: 
-            requests.get(f"{API_URL}/health", timeout=1)
-        except: 
-            return False, "Backend unreachable"
-        
-        payload = {
-            "message": {
-                "messageId": f"gui-{time.time()}",
-                "role": "user",
-                "parts": [{
-                    "file": {
-                        "mediaType": "application/octet-stream", 
-                        "name": os.path.basename(file_path), 
-                        "fileWithUri": f"file://{file_path}"
-                    }
-                }]
-            }
-        }
-        res = requests.post(f"{API_URL}/v1/message:send", json=payload, timeout=120)
-        if res.status_code == 200:
-            return True, res.json()
-        return False, res.text
-    except Exception as e:
-        return False, str(e)
+        requests.get(f"{API_URL}/health", timeout=1)
+        return True
+    except Exception:
+        return False
 
+
+def trigger_processing(file_path: str) -> Tuple[bool, Any]:
+    if not backend_health():
+        return False, "Backend unreachable"
+
+    payload = {
+        "message": {
+            "messageId": f"gui-{time.time()}",
+            "role": "user",
+            "parts": [{
+                "file": {
+                    "mediaType": "application/octet-stream",
+                    "name": os.path.basename(file_path),
+                    "fileWithUri": f"file://{file_path}"
+                }
+            }]
+        }
+    }
+
+    try:
+        response = requests.post(
+            f"{API_URL}/v1/message:send",
+            json=payload,
+            timeout=120
+        )
+        if response.status_code == 200:
+            return True, response.json()
+        return False, response.text
+    except Exception as exc:
+        return False, str(exc)
+
+
+def read_json(path: Path) -> Dict:
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+
+# -------------------------------------------------------------
+# Sidebar Controls
+# -------------------------------------------------------------
 with st.sidebar:
-    st.header("System Controls")
-    if st.button("Refresh State 🔄"):
+    st.title("System Controls")
+
+    if st.button("Refresh Application"):
         st.rerun()
-        
-    if st.button("🧹 Clear Status"):
-        if (settings.DATA_DIR / "status.json").exists(): 
-            (settings.DATA_DIR / "status.json").unlink()
-        st.toast("Status Cleared")
-        time.sleep(0.5)
+
+    if st.button("Clear Status File"):
+        status_file = settings.DATA_DIR / "status.json"
+        if status_file.exists():
+            status_file.unlink()
+        st.success("Status cleared")
         st.rerun()
-    
+
     st.divider()
     status_placeholder = st.empty()
-    
-    p = settings.DATA_DIR / "status.json"
-    if p.exists():
-        try:
-            d = json.load(open(p))
-            status_placeholder.info(f"📄 **{d.get('current_file')}**\n\n🔄 {d.get('step')}\n\nℹ️ {d.get('status')}")
-        except: 
-            status_placeholder.warning("Status file corrupt")
+    status_path = settings.DATA_DIR / "status.json"
+
+    if status_path.exists():
+        status = read_json(status_path)
+        status_placeholder.info(
+            f"File: {status.get('current_file', '')}\n\n"
+            f"Step: {status.get('step', '')}\n\n"
+            f"Status: {status.get('status', '')}"
+        )
     else:
-        status_placeholder.success("System Idle")
+        status_placeholder.success("System idle")
 
-tab1, tab2, tab3 = st.tabs(["🚀 Dashboard", "📊 Audit & Approval", "💬 Chat"])
 
-with tab1:
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        st.subheader("Upload")
-        uploaded = st.file_uploader("Files", type=["pdf", "png", "jpg", "json"], accept_multiple_files=True)
-        if uploaded and st.button(f"Process {len(uploaded)}"):
-            bar = st.progress(0)
-            for i, f in enumerate(uploaded):
-                p = settings.INVOICE_WATCH_DIR / f.name
-                with open(p, "wb") as w: 
-                    w.write(f.getbuffer())
-                
-                # Try to process everything; backend handles meta files gracefully now
-                ok, res = trigger_processing(str(p))
-                
-                if ok: 
-                    st.toast(f"Uploaded: {f.name}")
-                else: 
-                    st.error(f"Failed {f.name}: {res}")
-                bar.progress((i+1)/len(uploaded))
+# -------------------------------------------------------------
+# Tabs
+# -------------------------------------------------------------
+tab_dashboard, tab_approval, tab_chat = st.tabs(
+    ["Dashboard", "Audit & Approval", "Chat Assistant"]
+)
+
+
+# =============================================================
+# 1. DASHBOARD TAB
+# =============================================================
+with tab_dashboard:
+    st.header("Invoice Processing Dashboard")
+
+    col_left, col_right = st.columns([1, 2])
+
+    # ----------------- Upload Section -----------------
+    with col_left:
+        st.subheader("Upload Invoices")
+
+        uploaded_files = st.file_uploader(
+            "Upload Files",
+            type=["pdf", "png", "jpg", "json"],
+            accept_multiple_files=True
+        )
+
+        if uploaded_files and st.button(f"Process {len(uploaded_files)} Files"):
+            progress_bar = st.progress(0)
+
+            for index, file in enumerate(uploaded_files):
+                dest_path = settings.INVOICE_WATCH_DIR / file.name
+                with open(dest_path, "wb") as f:
+                    f.write(file.getbuffer())
+
+                success, response = trigger_processing(str(dest_path))
+
+                if success:
+                    st.info(f"Uploaded: {file.name}")
+                else:
+                    st.error(f"Failed: {file.name} | {response}")
+
+                progress_bar.progress((index + 1) / len(uploaded_files))
+
             time.sleep(1)
             st.rerun()
-            
-    with c2:
-        st.subheader("Monitoring")
-        st.markdown(f"""
-        - **Watch Folder:** `{settings.INVOICE_WATCH_DIR}`
-        - **Processed:** `{settings.PROCESSED_DIR}`
-        - **Reports:** `{settings.OUTPUT_DIR}`
-        """)
-        
-        watch_files = list(settings.INVOICE_WATCH_DIR.glob("*.*"))
-        if watch_files:
-            st.write("📁 **Files in Queue:**")
-            for wf in watch_files:
-                st.code(wf.name)
-        else:
-            st.write("✅ Queue is empty.")
 
-with tab2:
-    st.subheader("Approval Center")
-    
-    all_reps = sorted(list(settings.OUTPUT_DIR.glob("*_report.json")), key=os.path.getmtime, reverse=True)
-    
+    # ----------------- Monitoring Section -----------------
+    with col_right:
+        st.subheader("Monitoring Information")
+
+        st.markdown(
+            f"""
+            Watch Directory: `{settings.INVOICE_WATCH_DIR}`  
+            Processed Directory: `{settings.PROCESSED_DIR}`  
+            Reports Directory: `{settings.OUTPUT_DIR}`
+            """
+        )
+
+        queued_files = list(settings.INVOICE_WATCH_DIR.glob("*.*"))
+        if queued_files:
+            st.write("Files in Queue:")
+            for file in queued_files:
+                st.code(file.name)
+        else:
+            st.write("No files in queue.")
+
+
+# =============================================================
+# 2. AUDIT & APPROVAL TAB
+# =============================================================
+with tab_approval:
+    st.header("Audit Review and Approval Workflow")
+
+    all_reports = sorted(
+        list(settings.OUTPUT_DIR.glob("*_report.json")),
+        key=os.path.getmtime,
+        reverse=True,
+    )
+
     unique_reports = {}
-    for r in all_reps:
-        try:
-            with open(r) as f:
-                d = json.load(f)
-                fname = d.get("meta", {}).get("file_name")
-                
-                if fname and fname.endswith(".meta.json"):
-                    continue
-                    
-                if fname and fname not in unique_reports:
-                    unique_reports[fname] = (r, d)
-        except: continue
 
-    pending_list = []
-    processed_list = []
-    
-    for fname, (r_path, d) in unique_reports.items():
+    # Deduplicate meta files
+    for report in all_reports:
+        data = read_json(report)
+        fname = data.get("meta", {}).get("file_name")
+
+        if not fname or fname.endswith(".meta.json"):
+            continue
+
+        if fname not in unique_reports:
+            unique_reports[fname] = (report, data)
+
+    pending = []
+    archived = []
+
+    for fname, (report_path, data) in unique_reports.items():
+        status = data.get("meta", {}).get("status")
         is_archived = (settings.PROCESSED_DIR / fname).exists()
-        status = d.get("meta", {}).get("status")
-        
-        if is_archived or status == "COMPLETED":
-            processed_list.append((fname, r_path, d))
+
+        if status == "COMPLETED" or is_archived:
+            archived.append((fname, report_path, data))
         else:
-            pending_list.append((fname, r_path, d))
+            pending.append((fname, report_path, data))
 
-    st.markdown(f"### ⏳ Pending Review ({len(pending_list)})")
-    
-    if pending_list:
-        opts = {f"{fname} | {d.get('meta',{}).get('status', 'UNKNOWN')}": (fname, r_path) for fname, r_path, d in pending_list}
-        sel_label = st.selectbox("Select Invoice to Review", list(opts.keys()))
-        
-        if sel_label:
-            fname, r_path = opts[sel_label]
-            d = json.load(open(r_path))
-            
+    # -------------------- Pending Section --------------------
+    st.subheader(f"Pending Review ({len(pending)})")
+
+    if pending:
+        selector = {
+            f"{fname} | {data.get('meta', {}).get('status', 'UNKNOWN')}":
+            (fname, report_path)
+            for fname, report_path, data in pending
+        }
+
+        selected_label = st.selectbox("Select Invoice", list(selector.keys()))
+
+        if selected_label:
+            fname, r_path = selector[selected_label]
+            report = read_json(r_path)
+
+            safe = report.get("safety", {})
+            validation = report.get("validation", {})
+
             c1, c2 = st.columns([2, 1])
-            with c1:
-                safe = d.get("safety", {})
-                val = d.get("validation", {})
-                
-                col_a, col_b = st.columns(2)
-                col_a.metric("Safety Check", "Safe" if safe.get("is_safe") else "Flagged", delta_color="normal" if safe.get("is_safe") else "inverse")
-                col_b.metric("Business Logic", "Valid" if val.get("is_valid") else "Invalid", delta_color="normal" if val.get("is_valid") else "inverse")
-                
-                if not safe.get("is_safe"): 
-                    st.error(f"Safety Issue: {safe.get('details')}")
-                
-                if not val.get("is_valid"):
-                    st.warning("Validation Discrepancies:")
-                    for x in val.get("discrepancies", []): 
-                        st.write(f"- 🔴 {x}")
-                    for x in val.get("missing_fields", []): 
-                        st.write(f"- ⚠️ Missing: {x}")
 
+            # Core Audit Results
+            with c1:
+                st.write("Safety Check")
+                st.table({
+                    "Metric": ["Is Safe", "Details"],
+                    "Value": [safe.get("is_safe"), safe.get("details", "")]
+                })
+
+                st.write("Business Logic Validation")
+                st.table({
+                    "Metric": ["Is Valid"],
+                    "Value": [validation.get("is_valid")]
+                })
+
+                if validation.get("discrepancies"):
+                    with st.expander("Validation Discrepancies"):
+                        st.write(validation["discrepancies"])
+
+                if validation.get("missing_fields"):
+                    with st.expander("Missing Fields"):
+                        st.write(validation["missing_fields"])
+
+            # Actions
             with c2:
-                st.markdown("#### Actions")
-                comment = st.text_area("Approval Comment", key="comment_area")
-                if st.button("✅ Approve & Process", type="primary", use_container_width=True):
-                    with st.spinner("Resuming Workflow..."):
-                        res = requests.post(f"{API_URL}/v1/tasks/{fname}/resume", json={"comment": comment or "Approved via UI"})
-                        if res.status_code == 200:
-                            st.success("Approved! Moving to ingestion...")
-                            time.sleep(1)
-                            st.rerun()
-                        else: 
-                            st.error(f"Error: {res.text}")
-                
-                pdf = str(r_path).replace(".json", ".pdf")
-                if os.path.exists(pdf):
-                    with open(pdf, "rb") as f:
-                        st.download_button("Download Report PDF", f, file_name=os.path.basename(pdf), use_container_width=True)
+                st.subheader("Actions")
+
+                reviewer_comment = st.text_area("Reviewer Comment")
+
+                if st.button("Approve and Resume Workflow", use_container_width=True):
+                    response = requests.post(
+                        f"{API_URL}/v1/tasks/{fname}/resume",
+                        json={"comment": reviewer_comment or "Approved"}
+                    )
+                    if response.status_code == 200:
+                        st.success("Workflow resumed")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error(response.text)
+
+                # Report PDF
+                pdf_path = str(r_path).replace(".json", ".pdf")
+                if os.path.exists(pdf_path):
+                    with open(pdf_path, "rb") as f:
+                        st.download_button(
+                            label="Download PDF Report",
+                            data=f,
+                            file_name=os.path.basename(pdf_path)
+                        )
 
     st.divider()
-    st.markdown(f"### ✅ Processed Archive ({len(processed_list)})")
-    if processed_list:
-        proc_opts = {f"{fname}": (fname, r_path) for fname, r_path, d in processed_list}
-        sel_proc = st.selectbox("View Archived Report", list(proc_opts.keys()))
-        if sel_proc:
-            _, r_path = proc_opts[sel_proc]
-            st.json(json.load(open(r_path)))
 
-with tab3:
-    st.header("💬 Invoice Assistant (RAG)")
-    
-    if "messages" not in st.session_state: 
+    # -------------------- Archive Section --------------------
+    st.subheader(f"Processed Archive ({len(archived)})")
+
+    if archived:
+        picker = {fname: (fname, r_path) for fname, r_path, _ in archived}
+        selected_archived = st.selectbox("Select Archived Report", list(picker.keys()))
+
+        if selected_archived:
+            _, r_path = picker[selected_archived]
+            data = read_json(r_path)
+
+            with st.expander("Report Contents"):
+                st.json(data)
+
+
+# =============================================================
+# 3. CHAT ASSISTANT TAB
+# =============================================================
+with tab_chat:
+    st.header("Invoice Knowledge Assistant")
+
+    # Initialize chat history
+    if "messages" not in st.session_state:
         st.session_state.messages = []
-        
-    for m in st.session_state.messages: 
-        st.chat_message(m["role"]).write(m["content"])
-        
-    if q := st.chat_input("Ask about invoices..."):
-        st.session_state.messages.append({"role": "user", "content": q})
-        st.chat_message("user").write(q)
-        
+
+    # Display existing messages on every rerun
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # Handle user input (persistent input at bottom)
+    if prompt := st.chat_input("Enter your message"):
+        # Store and display user message
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # Call backend for response
+        try:
+            payload = {
+                "message": {
+                    "messageId": str(time.time()),
+                    "role": "user",
+                    "parts": [{"text": prompt}]
+                }
+            }
+            api_response = requests.post(
+                f"{API_URL}/v1/message:send",
+                json=payload,
+                timeout=120
+            )
+
+            if api_response.status_code == 200:
+                parts = api_response.json().get("message", {}).get("parts", [])
+                response_text = parts[0].get("text", "") if parts else ""
+            else:
+                response_text = f"Error: {api_response.status_code}"
+
+        except Exception as exc:
+            response_text = f"Connection error: {exc}"
+
+        # Display assistant reply
         with st.chat_message("assistant"):
-            with st.spinner("Searching Knowledge Base..."):
-                try:
-                    payload = {"message": {"messageId": str(time.time()), "role": "user", "parts": [{"text": q}]}}
-                    res = requests.post(f"{API_URL}/v1/message:send", json=payload, timeout=120)
-                    
-                    if res.status_code == 200:
-                        ans = res.json().get("message", {}).get("parts", [{}])[0].get("text", "No response.")
-                    else:
-                        ans = f"Error: {res.status_code} - {res.text}"
-                        
-                    st.session_state.messages.append({"role": "assistant", "content": ans})
-                    st.write(ans)
-                except Exception as e:
-                    st.error(f"Connection Error: {e}")
+            st.markdown(response_text)
+
+        # Store assistant reply in history
+        st.session_state.messages.append(
+            {"role": "assistant", "content": response_text}
+        )
