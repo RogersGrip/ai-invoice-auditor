@@ -1,3 +1,4 @@
+# ===== FILE: src/core/config.py =====
 from typing import Literal, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
@@ -9,7 +10,7 @@ class Settings(BaseSettings):
     
     MODEL_PROVIDER: Literal["bedrock", "ollama"] = "bedrock"
     
-    # CHANGED: Back to Command R+ (Auth works, we fix the payload)
+    # Using verified model ID
     TRANSLATION_MODEL: str = "cohere.command-r-plus-v1:0"
     VALIDATION_MODEL: str = "cohere.command-r-plus-v1:0"
     REPORTING_MODEL: str = "cohere.command-r-plus-v1:0"
@@ -20,7 +21,7 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3"
     OLLAMA_EMBEDDING_MODEL: str = "nomic-embed-text"
-
+    
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
     DATA_DIR: Path = BASE_DIR / "data"
     INVOICE_WATCH_DIR: Path = DATA_DIR / "invoices"
@@ -28,7 +29,7 @@ class Settings(BaseSettings):
     OUTPUT_DIR: Path = BASE_DIR / "outputs" / "reports"
     QDRANT_PATH: Path = DATA_DIR / "qdrant_storage"
     LOG_DIR: Path = BASE_DIR / "logs"
-
+    
     LANGFUSE_PUBLIC_KEY: Optional[str] = None
     LANGFUSE_SECRET_KEY: Optional[str] = None
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"

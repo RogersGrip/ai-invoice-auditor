@@ -1,58 +1,35 @@
 # ===== FILE: src/adk_agents/translation_agent.py =====
 import uuid
-import os
 from typing import Dict, Any
 from datetime import datetime, timezone
-
-# Use the ADK base if you want consistency, or just implement the protocol
-from src.frameworks.google_adk import ADKAgent
+from src.adk_agents.base_agent import AgentADK
 from src.core.protocol import AgentResponse
 from src.tools.tools import LangBridgeTool
-from src.core.logger import logger
 
-class TranslationAgent(ADKAgent):
+class TranslationAgent(AgentADK):
     def __init__(self):
-        # We don't strictly need the full ADK loop for Translation (it's a direct tool call usually),
-        # but we inherit to keep the type signature if needed.
-        # If we don't pass a model, we can just act as a wrapper around the tool.
-        super().__init__(name="Translation Agent", model=None, instruction="Translate invoice text.")
+        super().__init__(
+            name="translation_agent",
+            instruction="Translate text.", 
+            tools=[LangBridgeTool()]
+        )
         self.bridge_tool = LangBridgeTool()
 
-    def process(self, inputs: Dict[str, Any]) -> AgentResponse:
-        # Direct execution without the LLM loop for speed/reliability on this specific task
+    async def process_async(self, inputs: Dict[str, Any]) -> AgentResponse:
         raw_text = inputs.get("raw_text") or inputs.get("payload", {}).get("raw_text")
+        if not raw_text: 
+            return AgentResponse(id=str(uuid.uuid4()), timestamp=datetime.now(timezone.utc).isoformat(), source_agent=self.name, target_agent="Error", message_type="ERROR", payload={"error": "No text"})
         
-        if not raw_text:
-             return AgentResponse(
-                id=str(uuid.uuid4()),
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                source_agent=self.name,
-                target_agent="Error Handler",
-                message_type="ERROR",
-                payload={"error": "No text to translate"}
-            )
-            
-        logger.info(f"[{self.name}] Translating text...")
         try:
-            # Direct tool run
-            result = self.bridge_tool.run({"text": raw_text})
-            
+            res = self.bridge_tool.run({"text": raw_text})
             return AgentResponse(
-                id=str(uuid.uuid4()),
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                source_agent=self.name,
-                target_agent="Data Validation Agent",
-                message_type="TASK_HANDOFF",
-                payload=result,
-                context_id=inputs.get("context_id")
+                id=str(uuid.uuid4()), timestamp=datetime.now(timezone.utc).isoformat(), 
+                source_agent=self.name, target_agent="Data Validation Agent", 
+                message_type="TASK_HANDOFF", payload=res, context_id=inputs.get("context_id")
             )
         except Exception as e:
-            logger.error(f"Translation Error: {e}")
-            return AgentResponse(
-                id=str(uuid.uuid4()),
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                source_agent=self.name,
-                target_agent="Error Handler",
-                message_type="ERROR",
-                payload={"error": str(e)}
-            )
+            return AgentResponse(id=str(uuid.uuid4()), timestamp=datetime.now(timezone.utc).isoformat(), source_agent=self.name, target_agent="Error", message_type="ERROR", payload={"error": str(e)})
+
+    def process(self, inputs: Dict[str, Any]) -> AgentResponse:
+        import asyncio
+        return asyncio.run(self.process_async(inputs))
