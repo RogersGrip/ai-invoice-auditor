@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from src.adk_agents.base_agent import AgentADK
 from src.core.protocol import AgentResponse
 from src.tools.tools import InsightReporterTool
+from src.core.logger import logger
 
 class ReportingAgent(AgentADK):
     def __init__(self):
@@ -15,23 +16,34 @@ class ReportingAgent(AgentADK):
         )
         self.reporter_tool = InsightReporterTool()
 
-    # Async method for the graph
     async def process_async(self, inputs: Dict[str, Any]) -> AgentResponse:
         try:
-            # Run tool directly for speed/determinism
+            logger.info("ReportingAgent: Generating report...")
+            
+            # Safe extraction of inputs
+            file_name = inputs.get("file_name", "unknown_report")
+            data = inputs.get("extracted_data") or {}
+            val_results = inputs.get("validation_results") or {}
+            safety = inputs.get("safety_report") or {}
+            meta = inputs.get("metadata") or {}
+
             res = self.reporter_tool.run({
-                "file_name": inputs.get("file_name", "report"),
-                "extracted_data": inputs.get("extracted_data", {}),
-                "validation_report": inputs.get("validation_results", {}),
-                "safety_report": inputs.get("safety_report", {}),
-                "metadata": inputs.get("metadata", {})
+                "file_name": file_name,
+                "extracted_data": data,
+                "validation_report": val_results,
+                "safety_report": safety,
+                "metadata": meta
             })
+            
+            logger.info(f"Report Generated: {res}")
+            
             return AgentResponse(
                 id=str(uuid.uuid4()), source_agent=self.name, target_agent="Ingestion",
                 timestamp=datetime.now(timezone.utc).isoformat(), message_type="RESPONSE",
                 payload=res, context_id=inputs.get("context_id")
             )
         except Exception as e:
+            logger.error(f"Reporting Agent Failed: {e}")
             return AgentResponse(
                 id=str(uuid.uuid4()), timestamp=datetime.now(timezone.utc).isoformat(), 
                 source_agent=self.name, target_agent="Error", message_type="ERROR", 

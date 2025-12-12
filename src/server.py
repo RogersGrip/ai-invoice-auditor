@@ -3,142 +3,164 @@ import uvicorn
 import uuid
 import os
 import json
-import threading
-import time
-import warnings
 import asyncio
-from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Path, Body
-from fastapi.concurrency import run_in_threadpool
+import shutil
+import nest_asyncio
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Body
 from contextlib import asynccontextmanager
-from typing import List, Optional, Set
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+from typing import Set
+from pathlib import Path
+from datetime import datetime
 
 from src.core.protocol import (
     SendMessageRequest, SendMessageResponse, Task, AgentCard,
     Message, Role, TaskState, TaskStatus, Part
 )
 from src.core.logger import logger, setup_logger
-from src.core.mappers import map_state_to_task
 from src.core.state import InvoiceState, ProcessingStatus
-from src.core.discovery import AgentDiscovery
 from src.workflows.graph import create_invoice_graph
 from src.core.config import settings
 from src.adk_agents.monitor_agent import InvoiceMonitorAgent
 
+# Apply Asyncio Patch
+nest_asyncio.apply()
 setup_logger()
 
+# Global State
 graph_app = None
 monitor_agent = InvoiceMonitorAgent()
-stop_monitor = False
 processing_files: Set[str] = set()
+monitor_task = None
 
-# Monitor runs in a separate thread to not block FastAPI
-def monitor_loop():
-    logger.info("📂 Invoice Monitor Started...")
-    while not stop_monitor:
-        try:
-            if not graph_app:
-                time.sleep(1)
-                continue
-                
-            jobs = monitor_agent.scan()
-            for job in jobs:
-                file_path = job.get("file_path")
-                if not file_path: continue
-                
-                fname = os.path.basename(file_path)
-                
-                # Skip processed files
-                if (settings.PROCESSED_DIR / fname).exists():
-                    continue
-                    
-                if fname in processing_files:
-                    continue
-                
-                logger.info(f"👀 Auto-processing: {fname}")
-                processing_files.add(fname)
-                
-                # Trigger processing via API logic (using run_coroutine_threadsafe if needed, 
-                # but here we rely on the background task mechanism being triggered externally or via loop)
-                # Since we are in a thread, we can't await. We should use a request to self or task queue.
-                # For simplicity in this local setup, we start a new loop for the graph execution.
-                
-                asyncio.run(run_workflow_async(fname, file_path))
-                
-            time.sleep(2)
-        except Exception as e:
-            logger.error(f"Monitor Loop Error: {e}")
-            time.sleep(5)
+# Ensure Failed Dir exists
+FAILED_DIR = settings.DATA_DIR / "failed"
+FAILED_DIR.mkdir(exist_ok=True)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global graph_app, stop_monitor
-    logger.info("Initializing Orchestrator Graph...")
-    graph_app = create_invoice_graph()
+async def run_workflow_async(task_id: str, file_path: str):
+    """
+    Core processing logic for a single file.
+    """
+    fname = os.path.basename(file_path)
     
-    t = threading.Thread(target=monitor_loop, daemon=True)
-    t.start()
+    # 1. Deduplication check (In-memory only)
+    if fname in processing_files: 
+        return
+        
+    processing_files.add(fname)
+    logger.info(f"🚀 Starting Workflow for: {fname} (ID: {task_id})")
     
-    yield
-    
-    logger.info("Shutting down...")
-    stop_monitor = True
-    t.join(timeout=2)
-
-app = FastAPI(title="AI Invoice Auditor A2A Server", version="1.0.0", lifespan=lifespan)
-
-async def run_workflow_async(thread_id: str, file_path: str):
-    if not graph_app: return
-    
-    config = {"configurable": {"thread_id": thread_id}}
-    abs_path = os.path.abspath(file_path)
-    
-    # Load Metadata
-    metadata = {"source": "api"}
+    # 2. Setup State
+    config = {"configurable": {"thread_id": task_id}}
+    metadata = {"source": "monitor"}
     try:
-        meta_path = Path(abs_path).with_suffix(".meta.json")
+        meta_path = Path(file_path).with_suffix(".meta.json")
         if meta_path.exists():
             with open(meta_path, "r") as f:
                 metadata.update(json.load(f))
     except Exception: pass
 
     initial_state = InvoiceState(
-        file_path=abs_path,
-        file_name=os.path.basename(abs_path),
+        file_path=str(file_path),
+        file_name=fname,
         metadata=metadata,
         current_step="start",
         status=ProcessingStatus.PENDING
     )
 
+    # 3. Run Graph
     try:
-        logger.info(f"STARTING WORKFLOW | ID: {thread_id}")
-        # Use AINVOKE for async graph
-        await graph_app.ainvoke(initial_state, config=config)
-        logger.info(f"WORKFLOW COMPLETED | ID: {thread_id}")
+        if not graph_app:
+            logger.error("Graph not initialized!")
+            return
+
+        # Execute Async
+        final_state = await graph_app.ainvoke(initial_state, config=config)
+        logger.info(f"🏁 Workflow Finished | {fname} | Status: {final_state.get('status')}")
+        
     except Exception as e:
-        logger.error(f"WORKFLOW FAILED | ID: {thread_id} | Error: {e}")
+        logger.error(f"❌ Workflow Critical Failure | {fname} | Error: {e}")
+        # Move to failed to prevent infinite loop
+        try:
+            shutil.move(file_path, str(FAILED_DIR / fname))
+            logger.warning(f"Moved {fname} to failed folder.")
+        except Exception as mv_err:
+            logger.error(f"Failed to move poison file: {mv_err}")
+            
     finally:
-        fname = os.path.basename(file_path)
         if fname in processing_files:
             processing_files.remove(fname)
 
-@app.get("/.well-known/agent-card.json", response_model=AgentCard)
-async def get_default_agent_card():
-    card = AgentDiscovery.get_card("AI Invoice Auditor Orchestrator")
-    if not card:
-        cards = AgentDiscovery.get_all_cards()
-        if cards: return cards.get(list(cards.keys())[0])
-    return card or AgentCard(name="Default", description="Fallback", capabilities={}, defaultInputModes=[], defaultOutputModes=[], skills=[])
+
+async def monitor_loop():
+    """
+    Async Monitor Loop running on the main event loop.
+    """
+    logger.info("📂 Invoice Monitor Started (Async)...")
+    logger.info(f"Watching: {monitor_agent.watch_dir.resolve()}")
+    
+    while True:
+        try:
+            # 1. Scan for new files
+            jobs = monitor_agent.scan()
+            
+            if jobs:
+                logger.info(f"🔎 Monitor found {len(jobs)} candidates.")
+            
+            for job in jobs:
+                fpath = job.get("file_path")
+                fname = os.path.basename(fpath)
+                
+                # Check existence
+                if not os.path.exists(fpath): 
+                    continue
+                
+                # Check In-Progress
+                if fname in processing_files:
+                    continue
+                
+                logger.info(f"♻️  Processing found file: {fname}")
+                asyncio.create_task(run_workflow_async(fname, fpath))
+            
+            await asyncio.sleep(5)
+            
+        except asyncio.CancelledError:
+            logger.info("Monitor loop cancelled.")
+            break
+        except Exception as e:
+            logger.error(f"Monitor Loop Error: {e}")
+            await asyncio.sleep(5)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global graph_app, monitor_task
+    
+    # Initialize Graph
+    graph_app = create_invoice_graph()
+    logger.info("✅ Orchestrator Graph Initialized")
+    
+    # Start Monitor
+    monitor_task = asyncio.create_task(monitor_loop())
+    
+    yield
+    
+    # Shutdown
+    logger.info("Shutting down...")
+    if monitor_task:
+        monitor_task.cancel()
+        try:
+            await monitor_task
+        except asyncio.CancelledError:
+            pass
+
+app = FastAPI(title="AI Invoice Auditor A2A Server", version="1.0.0", lifespan=lifespan)
 
 @app.post("/v1/message:send", response_model=SendMessageResponse)
 async def send_message(request: SendMessageRequest, background_tasks: BackgroundTasks):
     msg = request.message
     context_id = msg.contextId or str(uuid.uuid4())
     
+    # 1. Handle File Trigger
     tasks_created = []
-    
-    # 1. Handle File Uploads / Triggers
     for part in msg.parts:
         if part.file:
             task_id = part.file.name
@@ -151,43 +173,85 @@ async def send_message(request: SendMessageRequest, background_tasks: Background
                 input_file = str(settings.INVOICE_WATCH_DIR / fname)
             
             if not os.path.exists(input_file):
-                # Check if it was just uploaded via Streamlit
-                time.sleep(1) 
+                await asyncio.sleep(1) 
             
             if fname in processing_files:
                 tasks_created.append(task_id)
                 continue
                 
             processing_files.add(fname)
-            # Add async task
             background_tasks.add_task(run_workflow_async, task_id, input_file)
             tasks_created.append(task_id)
 
     if tasks_created:
         return SendMessageResponse(task=Task(id=tasks_created[0], contextId=context_id, status=TaskStatus(state=TaskState.SUBMITTED)))
 
-    # 2. Handle Text Query (RAG)
+    # 2. Handle RAG
     input_text = next((p.text for p in msg.parts if p.text), None)
     if input_text:
         try:
-            # Lazy import to avoid circular dependency
             from src.workflows.rag_graph import create_rag_graph
             rag = create_rag_graph()
-            # Use async invoke
-            result = await rag.ainvoke({"query": input_text})
+            res = await rag.ainvoke({"query": input_text})
             
-            response_msg = Message(
+            return SendMessageResponse(message=Message(
                 messageId=str(uuid.uuid4()),
                 role=Role.AGENT,
                 contextId=context_id,
-                parts=[Part(text=result.get("answer", "No answer found.") + "\n\n" + str(result.get("evaluation", "")))]
-            )
-            return SendMessageResponse(message=response_msg)
+                parts=[Part(text=res.get("answer", "No answer.") + "\n\n" + str(res.get("evaluation", "")))]
+            ))
         except Exception as e:
             logger.error(f"RAG Error: {e}")
             raise HTTPException(status_code=500, detail=f"RAG Error: {e}")
 
-    raise HTTPException(status_code=400, detail="No valid input found.")
+    return SendMessageResponse(message=Message(
+        messageId=str(uuid.uuid4()),
+        role=Role.AGENT,
+        parts=[Part(text="Request received.")]
+    ))
+
+# --- HITL Approval Endpoint ---
+@app.post("/v1/approve")
+async def approve_invoice(payload: dict = Body(...)):
+    """
+    Manually approves an invoice report.
+    Payload: {"file_name": "...", "comment": "..."}
+    """
+    file_name = payload.get("file_name")
+    comment = payload.get("comment", "Manual Approval")
+    
+    if not file_name: raise HTTPException(400, "file_name required")
+    
+    # Try finding the report (might be simple name or timestamped name)
+    # We look for any report ending with this stem
+    base = Path(file_name).stem
+    report_path = settings.OUTPUT_DIR / f"{base}_report.json"
+    
+    if not report_path.exists():
+        # Fallback: search for partial match
+        candidates = list(settings.OUTPUT_DIR.glob(f"*{base}*_report.json"))
+        if candidates:
+            report_path = candidates[0]
+        else:
+            raise HTTPException(404, "Report not found")
+        
+    try:
+        with open(report_path, 'r') as f:
+            data = json.load(f)
+        
+        # Update Status
+        data['meta']['status'] = "APPROVED"
+        data['meta']['approval_comment'] = comment
+        data['meta']['approval_timestamp'] = datetime.now().isoformat()
+        
+        with open(report_path, 'w') as f:
+            json.dump(data, f, indent=2)
+            
+        logger.info(f"✅ Manually Approved: {file_name}")
+        return {"status": "success", "message": f"Approved {file_name}"}
+    except Exception as e:
+        logger.error(f"Approval Failed: {e}")
+        raise HTTPException(500, str(e))
 
 @app.get("/health")
 def health():

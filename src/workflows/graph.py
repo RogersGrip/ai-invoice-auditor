@@ -1,6 +1,7 @@
 # ===== FILE: src/workflows/graph.py =====
 import shutil
 import os
+import json
 from typing import Literal
 from pathlib import Path
 from langgraph.graph import StateGraph, END
@@ -19,7 +20,6 @@ from src.adk_agents.business_validator_agent import BusinessValidationAgent
 from src.adk_agents.reporting_agent import ReportingAgent
 from src.langgraph_agents.rag.indexer import IndexingAgent
 
-# Import MemorySaver for Async Compatibility
 from langgraph.checkpoint.memory import MemorySaver
 
 # Initialize Agents
@@ -35,6 +35,7 @@ indexer = IndexingAgent()
 
 @observe(name="extraction_node")
 async def extraction_node(state: InvoiceState) -> InvoiceState:
+    logger.info(f"📍 NODE: Extraction | File: {state.file_name}")
     update_progress(state.file_name, "Extraction")
     try:
         resp = extractor.process({
@@ -55,6 +56,7 @@ async def extraction_node(state: InvoiceState) -> InvoiceState:
 @observe(name="safety_node")
 async def safety_node(state: InvoiceState) -> InvoiceState:
     if state.status == ProcessingStatus.FAILED: return state
+    logger.info(f"📍 NODE: Safety | File: {state.file_name}")
     update_progress(state.file_name, "Safety Check")
     try:
         resp = safety.process({"raw_text": state.raw_text, "file_name": state.file_name})
@@ -75,6 +77,7 @@ async def safety_node(state: InvoiceState) -> InvoiceState:
 @observe(name="translation_node")
 async def translation_node(state: InvoiceState) -> InvoiceState:
     if state.status == ProcessingStatus.FAILED: return state
+    logger.info(f"📍 NODE: Translation | File: {state.file_name}")
     update_progress(state.file_name, "Translation")
     try:
         text = state.redacted_text or state.raw_text
@@ -93,6 +96,7 @@ async def translation_node(state: InvoiceState) -> InvoiceState:
 @observe(name="validation_node")
 async def validation_node(state: InvoiceState) -> InvoiceState:
     if state.status == ProcessingStatus.FAILED: return state
+    logger.info(f"📍 NODE: Data Validation | File: {state.file_name}")
     update_progress(state.file_name, "Validation")
     try:
         resp = await validator.process_async({"extracted_data": state.extracted_data})
@@ -113,6 +117,7 @@ async def validation_node(state: InvoiceState) -> InvoiceState:
 @observe(name="business_validation_node")
 async def business_validation_node(state: InvoiceState) -> InvoiceState:
     if state.status == ProcessingStatus.FAILED: return state
+    logger.info(f"📍 NODE: Business Validation | File: {state.file_name}")
     update_progress(state.file_name, "Business Validation")
     try:
         resp = await biz_validator.process_async({"extracted_data": state.extracted_data})
@@ -134,6 +139,7 @@ async def business_validation_node(state: InvoiceState) -> InvoiceState:
 @observe(name="reporting_node")
 async def reporting_node(state: InvoiceState) -> InvoiceState:
     if state.status == ProcessingStatus.FAILED: return state
+    logger.info(f"📍 NODE: Reporting | File: {state.file_name}")
     update_progress(state.file_name, "Reporting")
     try:
         resp = await reporter.process_async({
@@ -147,36 +153,68 @@ async def reporting_node(state: InvoiceState) -> InvoiceState:
         return state
     except Exception as e:
         logger.error(f"Reporting Failed: {e}")
-        state.status = ProcessingStatus.FAILED
         return state
 
 @observe(name="ingestion_node")
 async def ingestion_node(state: InvoiceState) -> InvoiceState:
-    if state.status == ProcessingStatus.FAILED: return state
+    logger.info(f"📍 NODE: Ingestion & Archiving | File: {state.file_name}")
     update_progress(state.file_name, "Ingestion & Archiving")
     
     # 1. Indexing
-    try:
-        text = state.redacted_text or state.raw_text or ""
-        indexer.process({"text": text, "filename": state.file_name, "metadata": state.metadata})
-        logger.info(f"Indexed {state.file_name}")
-    except Exception as e:
-        logger.warning(f"Indexing failed: {e}")
+    if state.status != ProcessingStatus.FAILED:
+        try:
+            text = state.redacted_text or state.raw_text or ""
+            if text:
+                indexer.process({"text": text, "filename": state.file_name, "metadata": state.metadata})
+                logger.info(f"✅ Indexed {state.file_name}")
+        except Exception as e:
+            logger.warning(f"Indexing failed: {e}")
 
-    # 2. Archiving (Move File)
+    # 2. Archiving (With Metadata Sync)
     try:
         source_path = Path(state.file_path)
         if source_path.exists():
-            dest_path = settings.PROCESSED_DIR / source_path.name
-            shutil.move(str(source_path), str(dest_path))
-            logger.info(f"✅ Archived {state.file_name} to {dest_path}")
+            dest_dir = settings.PROCESSED_DIR
+            if not dest_dir.exists(): dest_dir.mkdir(parents=True)
             
+            dest_path = dest_dir / source_path.name
+            
+            # If duplicates, rename with timestamp
+            final_name = source_path.name
+            if dest_path.exists():
+                import time
+                timestamp = int(time.time())
+                final_name = f"{timestamp}_{source_path.name}"
+                dest_path = dest_dir / final_name
+
+            shutil.move(str(source_path), str(dest_path))
+            logger.info(f"📂 Archived to {dest_path}")
+            
+            # --- CRITICAL FIX: Update Report JSON if file was renamed ---
+            if final_name != state.file_name:
+                try:
+                    report_path = settings.OUTPUT_DIR / f"{Path(state.file_name).stem}_report.json"
+                    if report_path.exists():
+                        with open(report_path, 'r') as f:
+                            report_data = json.load(f)
+                        
+                        # Update filename in report
+                        report_data['meta']['file_name'] = final_name
+                        report_data['meta']['archived_path'] = str(dest_path)
+                        
+                        # Save back
+                        with open(report_path, 'w') as f:
+                            json.dump(report_data, f, indent=2)
+                        logger.info(f"📝 Updated report metadata to point to {final_name}")
+                except Exception as update_err:
+                    logger.warning(f"Failed to update report metadata: {update_err}")
+
+            # Archive metadata file
             meta_src = source_path.with_suffix(".meta.json")
             if meta_src.exists():
-                shutil.move(str(meta_src), str(settings.PROCESSED_DIR / meta_src.name))
-        else:
-            logger.warning(f"File {state.file_path} not found for archiving.")
-            
+                meta_dest_name = Path(final_name).with_suffix(".meta.json").name
+                shutil.move(str(meta_src), str(dest_dir / meta_dest_name))
+                
     except Exception as e:
         logger.error(f"Archiving failed: {e}")
 
@@ -184,17 +222,9 @@ async def ingestion_node(state: InvoiceState) -> InvoiceState:
     update_progress(state.file_name, "Completed", "Processed & Archived")
     return state
 
-# --- Edge Logic ---
-def route_after_extract(state): 
-    return "reporting" if state.status == ProcessingStatus.FAILED else "safety"
-
-def route_after_safety(state): 
-    return "reporting" if state.status in [ProcessingStatus.FAILED, ProcessingStatus.FLAGGED] else "translation"
-
 # --- Graph Construction ---
 def create_invoice_graph():
     wf = StateGraph(InvoiceState)
-    
     wf.add_node("extraction", extraction_node)
     wf.add_node("safety", safety_node)
     wf.add_node("translation", translation_node)
@@ -205,6 +235,9 @@ def create_invoice_graph():
     
     wf.set_entry_point("extraction")
     
+    def route_after_extract(state): return "reporting" if state.status == ProcessingStatus.FAILED else "safety"
+    def route_after_safety(state): return "reporting" if state.status in [ProcessingStatus.FAILED, ProcessingStatus.FLAGGED] else "translation"
+
     wf.add_conditional_edges("extraction", route_after_extract, {"safety": "safety", "reporting": "reporting"})
     wf.add_conditional_edges("safety", route_after_safety, {"translation": "translation", "reporting": "reporting"})
     
@@ -214,7 +247,4 @@ def create_invoice_graph():
     wf.add_edge("reporting", "ingestion")
     wf.add_edge("ingestion", END)
     
-    # Use MemorySaver instead of SqliteSaver to support async
-    checkpointer = MemorySaver()
-    
-    return wf.compile(checkpointer=checkpointer)
+    return wf.compile(checkpointer=MemorySaver())

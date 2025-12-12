@@ -17,13 +17,13 @@ class ValidateLineItemTool(BaseTool):
     def _get_declaration(self):
         return FunctionDeclaration(
             name=self.name,
-            description="Checks if an invoice line item matches the ERP records. Returns match/mismatch status.",
+            description=self.description,
             parameters=Schema(
                 type=Type.OBJECT, 
                 properties={
-                    "item_code": Schema(type=Type.STRING, description="Product SKU or Item Code"),
-                    "unit_price": Schema(type=Type.NUMBER, description="Unit price from invoice"),
-                    "currency": Schema(type=Type.STRING, description="Currency code (e.g. USD)")
+                    "item_code": Schema(type=Type.STRING),
+                    "unit_price": Schema(type=Type.NUMBER),
+                    "currency": Schema(type=Type.STRING)
                 },
                 required=["item_code", "unit_price"]
             )
@@ -40,13 +40,7 @@ class BusinessValidationAgent(AgentADK):
     def __init__(self):
         super().__init__(
             name="business_validation_agent",
-            instruction=(
-                "You are an ERP Validation Machine. "
-                "You CANNOT verify prices yourself. You MUST use the 'validate_line_item' tool for EVERY item. "
-                "1. Loop through the provided items. "
-                "2. Call 'validate_line_item' for each one. "
-                "3. Report only the final status (match/mismatch)."
-            ),
+            instruction="You are an ERP Auditor. Validate invoice line items using the 'validate_line_item' tool.",
             tools=[ValidateLineItemTool()]
         )
 
@@ -62,14 +56,12 @@ class BusinessValidationAgent(AgentADK):
         if not line_items:
              return self._create_response("match", [], data, context_id)
 
-        # Force tool use in prompt
-        task_prompt = f"Validate these {len(line_items)} items now:\n{json.dumps(line_items, indent=2)}"
+        task_prompt = f"Audit these items against ERP:\n{json.dumps(line_items, indent=2)}"
         result_text = await self.run(task_prompt)
         
         status = "match"
         discrepancies = []
-        lower = result_text.lower()
-        if "mismatch" in lower or "discrepancy" in lower or "failed" in lower:
+        if "mismatch" in result_text.lower() or "discrepancy" in result_text.lower():
             status = "mismatch"
             discrepancies.append(result_text)
 

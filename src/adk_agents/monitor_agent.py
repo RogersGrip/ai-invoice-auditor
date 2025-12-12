@@ -1,6 +1,7 @@
 # ===== FILE: src/adk_agents/monitor_agent.py =====
 import uuid
 import shutil
+import os
 from typing import Dict, Any, List
 from datetime import datetime
 from pathlib import Path
@@ -34,17 +35,39 @@ class InvoiceMonitorAgent(AgentADK):
         self.processed_dir.mkdir(parents=True, exist_ok=True)
         
         super().__init__(
-            name="invoice_monitor_agent", # FIXED: Valid identifier
+            name="invoice_monitor_agent",
             instruction="You are a Watchdog. Check for new files.",
             tools=[DirectoryScanTool(str(self.watch_dir))]
         )
 
     def scan(self) -> List[Dict]:
+        """Direct helper for high-frequency server polling."""
         jobs = []
+        # logger.debug(f"Scanning directory: {self.watch_dir.resolve()}")
+        
+        if not self.watch_dir.exists():
+            logger.warning(f"Watch directory does not exist: {self.watch_dir}")
+            return []
+
         for f in self.watch_dir.glob("*.*"):
-            if not f.name.startswith(".") and not f.name.endswith(".meta.json"):
-                jobs.append({"file_path": str(f), "timestamp": f.stat().st_mtime, "metadata": {}})
-        return sorted(jobs, key=lambda x: x["timestamp"])
+            # Logging to debug why files might be skipped
+            # logger.debug(f"Found file: {f.name}")
+            
+            if f.name.startswith("."):
+                # logger.debug(f"Skipping hidden file: {f.name}")
+                continue
+                
+            if f.name.endswith(".meta.json"):
+                # logger.debug(f"Skipping meta file: {f.name}")
+                continue
+                
+            # Valid file found
+            jobs.append({"file_path": str(f), "timestamp": f.stat().st_mtime, "metadata": {}})
+            
+        if jobs:
+            jobs.sort(key=lambda x: x["timestamp"])
+            
+        return jobs
 
     def process(self, inputs: Dict[str, Any]) -> AgentResponse:
         import asyncio
