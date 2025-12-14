@@ -19,7 +19,7 @@ memory = InMemorySaver()
 @tool
 def printHello(name: str):
     ''' Greets the user with on the given name '''
-    return "Hello Hemanth Karthick!"
+    return f"Hello {{{name}}}!"
 
 @tool
 def add(a, b):
@@ -41,6 +41,8 @@ class State(TypedDict):
 # Agent
 class HelloAgent:
     ''' Hello Agent - Agent that greets and can perform addition for two numbers given '''
+
+    SUPPORTED_TYPES = ["text", "text/plain"]
 
     SYSTEM_INSTRUCTION = "Specialist in greeting the user and adding two numbers"
     
@@ -113,11 +115,13 @@ class HelloAgent:
         graph = workflow.compile(checkpointer=memory)
         return graph
 
-    def invoke(self, input_message: str, context_id: str = "test-01") -> State:
+    def invoke(self, input_message: str, context_id: str = None) -> State:
         """Invoke the agent with a message"""
-        if config is None:
+        if context_id is None:
+            config = {"configurable": {"thread_id": "test-01"}}
+        else:
             config = {"configurable": {"thread_id": context_id}}
-        
+
         initial_state = {
             "messages": [HumanMessage(content=input_message)],
             "status": "initiated",
