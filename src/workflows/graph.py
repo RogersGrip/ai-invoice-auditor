@@ -169,7 +169,7 @@ async def human_review_node(state: InvoiceState) -> InvoiceState:
     The workflow pauses BEFORE entering here (via interrupt_before), 
     or we pause execution flow here.
     """
-    logger.info(f"🛑 NODE: Human Review | Waiting for Approval for {state.file_name}")
+    logger.info(f"NODE: Human Review | Waiting for Approval for {state.file_name}")
     update_progress(state.file_name, "Awaiting Approval", "Paused")
     # If we are here and have approval info, it means we were resumed!
     if state.approval_info:

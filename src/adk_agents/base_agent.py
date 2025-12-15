@@ -73,7 +73,7 @@ class CustomRunner:
         self.app_name = app_name
 
     async def run_async(self, user_id: str, session_id: str, new_message: Content) -> AsyncGenerator[Event, None]:
-        logger.info(f"🚀 CustomRunner: Processing for {self.agent.name}")
+        logger.info(f"CustomRunner: Processing for {self.agent.name}")
         
         history = [
             Content(role="system", parts=[Part(text=self.agent.instruction)]),
@@ -86,7 +86,7 @@ class CustomRunner:
             
             # Handle Tools
             if response.function_calls:
-                logger.info(f"🛠️  Model requested {len(response.function_calls)} tool calls")
+                logger.info(f"Model requested {len(response.function_calls)} tool calls")
                 for fc in response.function_calls:
                     yield Event(content=Content(role="model", parts=[Part(function_call=fc)]))
                     

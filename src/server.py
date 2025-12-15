@@ -96,7 +96,7 @@ async def process_file(file_name: str, file_path: str):
         metadata={"source": "monitor", "ingest_timestamp": datetime.now().isoformat()}
     )
     
-    logger.info(f"🚀 Starting Workflow [Thread: {thread_id}] for {file_name}")
+    logger.info(f"Starting Workflow [Thread: {thread_id}] for {file_name}")
     
     try:
         # Initial run
@@ -108,7 +108,7 @@ async def process_file(file_name: str, file_path: str):
         final_state = snapshot.values
         status = final_state.status if hasattr(final_state, 'status') else "UNKNOWN"
         
-        logger.info(f"🏁 Workflow Paused/Finished | Status: {status}")
+        logger.info(f"Workflow Paused/Finished | Status: {status}")
         
         # If completed, clean up. If paused (HITL), keep in memory.
         if status == ProcessingStatus.COMPLETED:

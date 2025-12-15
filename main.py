@@ -73,7 +73,7 @@ def main():
                     # Use invoke with config to persist state
                     # invoke() returns the final state of THIS execution step.
                     final_state = app.invoke(initial_state, config=config)
-                    logger.info(f"🏁 Workflow Step Finished. Status: {final_state.get('status')}")
+                    logger.info(f"Workflow Step Finished. Status: {final_state.get('status')}")
                     
                     # Re-check state to see if valid pause or really finished
                     final_snap = app.get_state(config)

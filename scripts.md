@@ -12,3 +12,4 @@
 - `uv run python -m src.manual_run`
 - `export PYTHONPATH=$(pwd)`
 - `uv run python src/adk_agents/translator/main.py`
+- 

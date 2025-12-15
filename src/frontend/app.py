@@ -18,8 +18,8 @@ from src.core.config import settings
 
 API_URL = "http://localhost:8000"
 
-st.set_page_config(page_title="AI Invoice Auditor", page_icon="🛡️", layout="wide")
-st.title("🛡️ AI Invoice Auditor & Safety Guard")
+st.set_page_config(page_title="AI Invoice Auditor", page_icon="shield", layout="wide")
+st.title("AI Invoice Auditor & Safety Guard")
 
 # --- Sidebar ---
 with st.sidebar:
@@ -78,7 +78,7 @@ def trigger_upload(fp):
         return False, str(e)
 
 # --- Tabs ---
-tab1, tab2, tab3 = st.tabs(["🚀 Dashboard", "📊 Audit & Approval", "💬 Chat"])
+tab1, tab2, tab3 = st.tabs(["Dashboard", "Audit & Approval", "Chat"])
 
 # --- Tab 1: Dashboard ---
 with tab1:

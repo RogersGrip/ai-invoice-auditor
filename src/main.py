@@ -128,7 +128,7 @@ def main():
                 # Register new thread
                 active_threads[file_path] = processed_name
                 
-                logger.info(f"🚀 Starting Workflow for: {original_name} (ID: {processed_name})")
+                logger.info(f"Starting Workflow for: {original_name} (ID: {processed_name})")
                 
                 # 3a. Check for Existing Thread (Resume or Skip) - DEPRECATED via active_threads check above
                 # But kept for safety if active_threads is cleared
@@ -179,7 +179,7 @@ def main():
                     else:
                          final_status = final_state_output.status
                           
-                    logger.info(f"🏁 Workflow Finished. Status: {final_status}")
+                    logger.info(f"Workflow Finished. Status: {final_status}")
                      
                     # Force Update UI to Completed
                     from src.core.state import update_progress
