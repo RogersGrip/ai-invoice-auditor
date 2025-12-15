@@ -1,15 +1,13 @@
-from typing import List, Dict, Any, Callable
 import inspect
+from typing import List, Dict, Any, Callable
 from fastmcp import FastMCP
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from mcp.types import CallToolResult, ListToolsResult
 from src.core.protocol import MCPTool, MCPClient as BaseMCPClient
 from src.core.logger import logger
 
 class LocalMCPClient(BaseMCPClient):
-    """
-    A lightweight MCP Client that interacts directly with local FastMCP server instances.
-    It bridges the gap between the Agentic Workflow and MCP Tools without requiring network overhead for local calls.
-    """
-    
     def __init__(self, mcp_server: FastMCP):
         self.server = mcp_server
         self._tools_map: Dict[str, Callable] = {}
@@ -17,10 +15,7 @@ class LocalMCPClient(BaseMCPClient):
         self._load_registry()
 
     def _load_registry(self):
-        """Introspects the FastMCP server instance to build a registry."""
         try:
-            # Access internal tool registry of FastMCP
-            # Note: FastMCP internal structure might vary, adapting to common pattern
             if hasattr(self.server, "_tool_manager"):
                 for name, tool_obj in self.server._tool_manager._tools.items():
                     self._tools_map[name] = tool_obj.fn
@@ -28,21 +23,19 @@ class LocalMCPClient(BaseMCPClient):
             if hasattr(self.server, "_resource_manager"):
                 for uri, res_obj in self.server._resource_manager._resources.items():
                     self._resources_map[uri] = res_obj.fn
-                    
-            logger.info(f"MCP Client loaded {len(self._tools_map)} tools from {self.server.name}")
             
+            logger.info(f"MCP Client loaded {len(self._tools_map)} tools from {self.server.name}")
         except Exception as e:
             logger.error(f"Failed to load MCP registry: {e}")
 
     def list_tools(self) -> List[MCPTool]:
         tools = []
         for name, fn in self._tools_map.items():
-            # Basic introspection for schema
             sig = inspect.signature(fn)
             schema = {
                 "type": "object",
                 "properties": {
-                    k: {"type": "string"} # Simplified schema generation
+                    k: {"type": "string"} 
                     for k in sig.parameters.keys()
                 }
             }
@@ -53,14 +46,18 @@ class LocalMCPClient(BaseMCPClient):
             ))
         return tools
 
-    def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
-        logger.debug(f"MCP Call: {name} args={arguments}")
+    def call_tool(self, name: str, arguments: Dict[str, Any], sampling: bool = False) -> Any:
+        logger.debug(f"MCP Call: {name} | Sampling: {sampling}")
         
         if name not in self._tools_map:
             raise ValueError(f"Tool {name} not found in MCP server.")
             
         fn = self._tools_map[name]
         try:
+            # Simulate LLM Sampling if requested within the MCP Context
+            if sampling:
+                logger.info("Sampling enabled for tool execution (Capability Check)")
+            
             return fn(**arguments)
         except TypeError as e:
             logger.error(f"MCP Argument Mismatch for {name}: {e}")
