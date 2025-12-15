@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Tuple
 from pydantic import BaseModel, Field
-from src.core.llm_wrapper import BedrockLLMService
+from src.core.llm_wrapper import LLMService
 from src.core.protocol import Agent, AgentResponse
 from src.core.logger import logger
 from src.core.config import settings
@@ -33,12 +33,12 @@ class SafetyAgent(Agent):
     def __init__(self):
         self.model_id = settings.SAFETY_MODEL
         try:
-            self.llm_service = BedrockLLMService(
+            self.llm_service = LLMService(
                 model_id=self.model_id,
                 temperature=0.0
             )
         except Exception as e:
-            logger.warning(f"Bedrock Init Failed for Safety Agent: {e}. Running in Fallback Mode.")
+            logger.warning(f"LLM Init Failed for Safety Agent: {e}. Running in Fallback Mode.")
             self.llm_service = None
 
     def _redact_pii(self, text: str) -> Tuple[str, List[str]]:

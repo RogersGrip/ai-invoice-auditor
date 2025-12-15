@@ -14,7 +14,7 @@ mkdir -p data/invoices data/processed data/qdrant_storage outputs/reports logs
 
 # Dependencies check
 if command -v uv &> /dev/null; then
-    uv pip install fastapi uvicorn pydantic requests streamlit langchain-aws ragas fpdf qdrant-client loguru litellm > /dev/null 2>&1
+    uv pip install fastapi uvicorn pydantic requests streamlit langchain-aws langchain-community ragas fpdf qdrant-client loguru litellm > /dev/null 2>&1
 fi
 
 # Colors

@@ -11,7 +11,7 @@ from src.core.logger import logger
 from src.database.qdrant_db import vector_store
 from src.tools.ocr_engine import OCREngine
 from src.core.state import InvoiceData
-from src.core.llm_wrapper import BedrockLLMService
+from src.core.llm_wrapper import LLMService
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_text_splitters import RecursiveCharacterTextSplitter

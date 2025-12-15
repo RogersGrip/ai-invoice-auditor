@@ -1,7 +1,7 @@
 import json
 import re
 from typing import Dict, Any
-from src.core.llm_wrapper import BedrockLLMService
+from src.core.llm_wrapper import LLMService
 from src.core.config import settings
 from src.core.logger import logger
 
@@ -11,8 +11,8 @@ class MLflowEvaluator:
     Simulates MLflow's GenAI evaluation metrics.
     """
     def __init__(self):
-        # Replaced BedrockCommandRPlus with BedrockLLMService
-        self.llm_service = BedrockLLMService(
+        # Replaced BedrockCommandRPlus with LLMService
+        self.llm_service = LLMService(
             model_id=settings.VALIDATION_MODEL,
             temperature=0.0
         )
