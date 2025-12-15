@@ -15,7 +15,7 @@ mkdir -p data/invoices data/processed data/qdrant_storage outputs/reports logs
 
 # Dependencies check
 if command -v uv &> /dev/null; then
-    uv pip install fastapi uvicorn pydantic requests streamlit langchain-aws ragas fpdf qdrant-client loguru litellm > /dev/null 2>&1
+    uv pip install a2a-sdk presidio-analyzer presidio-anonymizer fpdf2 fastapi uvicorn pydantic requests streamlit langchain-aws ragas fpdf qdrant-client loguru litellm > /dev/null 2>&1
 fi
 
 # Colors

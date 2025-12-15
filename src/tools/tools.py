@@ -82,11 +82,8 @@ class DataCompletenessCheckerTool(BaseTool):
 
 class BusinessValidationTool(BaseTool):
     def __init__(self): super().__init__(name="business_validation_tool", description="Checks ERP.")
-    def run(self, args): return {"status": "placeholder"}
+    def run(self, args): return {"status": "checked_externally"}
 
-# ==============================================================================
-# UPDATED: Insight Reporter Tool (Detailed PDF)
-# ==============================================================================
 class InsightReporterTool(BaseTool):
     def __init__(self):
         super().__init__(name="insight_reporter_tool", description="Generates reports.")
@@ -113,15 +110,21 @@ class InsightReporterTool(BaseTool):
         validation_report = args.get("validation_report", {})
         safety_report = args.get("safety_report", {})
         metadata = args.get("metadata", {})
+        approval_info = args.get("approval_info")  # Check for HITL approval
 
         base_name = Path(file_name).stem
         json_path = settings.OUTPUT_DIR / f"{base_name}_report.json"
         pdf_path = settings.OUTPUT_DIR / f"{base_name}_report.pdf"
         
+        # Determine Status
         status = "COMPLETED"
         if safety_report and not safety_report.get("is_safe"): status = "FLAGGED"
         elif validation_report and not validation_report.get("is_valid"): status = "DATA_INVALID"
         elif validation_report.get("business_status") == "mismatch": status = "BUSINESS_MISMATCH"
+        
+        # Override status if explicitly approved
+        if approval_info:
+            status = "APPROVED_BY_HITL"
 
         # Save JSON
         report_data = {
@@ -133,7 +136,8 @@ class InsightReporterTool(BaseTool):
             },
             "data": extracted_data,
             "validation": validation_report,
-            "safety": safety_report
+            "safety": safety_report,
+            "approval": approval_info
         }
         with open(json_path, 'w') as f:
             json.dump(report_data, f, indent=2)
@@ -158,13 +162,24 @@ class InsightReporterTool(BaseTool):
             pdf.set_font("Arial", 'B', 10)
             pdf.cell(30, 6, "Status:", border=0)
             
-            if status == "COMPLETED": pdf.set_text_color(0, 128, 0) # Green
+            if "APPROVED" in status or status == "COMPLETED": pdf.set_text_color(0, 128, 0) # Green
             elif status in ["FLAGGED", "DATA_INVALID"]: pdf.set_text_color(200, 0, 0) # Red
             else: pdf.set_text_color(255, 140, 0) # Orange
             
             pdf.cell(0, 6, status, border=0, ln=1)
             pdf.set_text_color(0, 0, 0) # Reset Black
             pdf.ln(5)
+
+            # 2.5 Approval Info (if present)
+            if approval_info:
+                pdf.set_fill_color(240, 255, 240) # Light Green
+                pdf.set_font("Arial", 'B', 10)
+                pdf.cell(0, 8, " HITL Approval / Override", ln=1, fill=True, border=1)
+                pdf.set_font("Arial", 'I', 10)
+                by = approval_info.get("approved_by", "Unknown")
+                reason = approval_info.get("reason", "No reason provided")
+                pdf.multi_cell(0, 6, self._sanitize(f"Approved By: {by}\nReason: {reason}"))
+                pdf.ln(2)
 
             # 3. Invoice Details
             pdf.set_fill_color(230, 230, 250)
