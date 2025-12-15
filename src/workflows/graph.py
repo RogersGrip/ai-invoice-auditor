@@ -16,7 +16,6 @@ from src.adk_agents.reporting_agent import ReportingAgent
 from src.langgraph_agents.rag.indexer import IndexingAgent
 from langgraph.checkpoint.memory import MemorySaver
 
-# Initialize Agents
 extractor = ExtractorAgent()
 safety = SafetyAgent()
 translator = TranslationAgent()
@@ -25,54 +24,147 @@ biz_validator = BusinessValidationAgent()
 reporter = ReportingAgent()
 indexer = IndexingAgent()
 
+@observe(name="extraction_node")
+async def extraction_node(state: InvoiceState) -> InvoiceState:
+    logger.info(f"NODE: Extraction | File: {state.file_name}")
+    update_progress(state.file_name, "Extraction")
+    try:
+        resp = extractor.process({
+            "file_path": state.file_path,
+            "file_name": state.file_name,
+            "metadata": state.metadata
+        })
+        if resp.message_type == "ERROR": raise Exception(resp.payload.get("error"))
+        state.raw_text = resp.payload.get("raw_text")
+        state.status = ProcessingStatus.EXTRACTED
+        return state
+    except Exception as e:
+        logger.error(f"Extraction Failed: {e}")
+        state.status = ProcessingStatus.FAILED
+        state.error_log.append(f"Extraction Error: {e}")
+        return state
+
+@observe(name="safety_node")
+async def safety_node(state: InvoiceState) -> InvoiceState:
+    if state.status == ProcessingStatus.FAILED: return state
+    logger.info(f"NODE: Safety | File: {state.file_name}")
+    update_progress(state.file_name, "Safety Check")
+    try:
+        resp = safety.process({"raw_text": state.raw_text, "file_name": state.file_name})
+        state.redacted_text = resp.payload.get("redacted_text")
+        state.safety_report = SafetyReport(**resp.payload.get("safety_report", {}))
+        if not state.safety_report.is_safe:
+            state.status = ProcessingStatus.FLAGGED
+        else:
+            state.status = ProcessingStatus.SAFE
+        return state
+    except Exception as e:
+        logger.error(f"Safety Failed: {e}")
+        state.status = ProcessingStatus.FAILED
+        return state
+
+@observe(name="translation_node")
+async def translation_node(state: InvoiceState) -> InvoiceState:
+    if state.status == ProcessingStatus.FAILED: return state
+    logger.info(f"NODE: Translation | File: {state.file_name}")
+    update_progress(state.file_name, "Translation")
+    try:
+        text = state.redacted_text or state.raw_text
+        resp = await translator.process_async({"raw_text": text})
+        if resp.message_type == "ERROR": raise Exception(resp.payload.get("error"))
+        state.extracted_data = resp.payload.get("extracted_data")
+        state.status = ProcessingStatus.TRANSLATED
+        return state
+    except Exception as e:
+        logger.error(f"Translation Failed: {e}")
+        state.status = ProcessingStatus.FAILED
+        return state
+
+@observe(name="validation_node")
+async def validation_node(state: InvoiceState) -> InvoiceState:
+    if state.status == ProcessingStatus.FAILED: return state
+    logger.info(f"NODE: Data Validation | File: {state.file_name}")
+    update_progress(state.file_name, "Validation")
+    try:
+        resp = await validator.process_async({"extracted_data": state.extracted_data})
+        if resp.message_type == "ERROR": raise Exception(resp.payload.get("error"))
+        state.validation_results = {
+            "is_valid": resp.payload.get("validation_status") == "valid",
+            "missing_fields": resp.payload.get("missing_fields", [])
+        }
+        state.status = ProcessingStatus.VALIDATED
+        return state
+    except Exception as e:
+        logger.error(f"Validation Failed: {e}")
+        state.status = ProcessingStatus.FAILED
+        return state
+
+@observe(name="business_validation_node")
+async def business_validation_node(state: InvoiceState) -> InvoiceState:
+    if state.status == ProcessingStatus.FAILED: return state
+    logger.info(f"NODE: Business Validation | File: {state.file_name}")
+    update_progress(state.file_name, "Business Validation")
+    try:
+        resp = await biz_validator.process_async({"extracted_data": state.extracted_data})
+        payload = resp.payload
+        state.validation_results["business_status"] = payload.get("business_validation_status")
+        state.validation_results["discrepancies"] = payload.get("discrepancies", [])
+        if payload.get("discrepancies"):
+            state.validation_results["is_valid"] = False
+            state.status = ProcessingStatus.BUSINESS_MISMATCH
+        return state
+    except Exception as e:
+        logger.error(f"Business Validation Failed: {e}")
+        state.validation_results["business_status"] = "error"
+        return state
+
+@observe(name="reporting_node")
+async def reporting_node(state: InvoiceState) -> InvoiceState:
+    if state.status == ProcessingStatus.FAILED: return state
+    logger.info(f"NODE: Reporting | File: {state.file_name}")
+    update_progress(state.file_name, "Reporting")
+    try:
+        resp = await reporter.process_async({
+            "file_name": state.file_name,
+            "extracted_data": state.extracted_data,
+            "validation_report": state.validation_results,
+            "safety_report": state.safety_report.model_dump() if state.safety_report else None,
+            "metadata": state.metadata
+        })
+        state.report_path = resp.payload
+        return state
+    except Exception as e:
+        logger.error(f"Reporting Failed: {e}")
+        return state
+
 @observe(name="ingestion_node")
 async def ingestion_node(state: InvoiceState) -> InvoiceState:
-    logger.info(f"📍 NODE: Ingestion & Archiving | File: {state.file_name}")
+    logger.info(f"NODE: Ingestion | File: {state.file_name}")
     update_progress(state.file_name, "Ingestion & Archiving")
     
-    # Check for Manual Approval Overrides
     approval_meta = state.metadata.get("approval_context", {})
     if approval_meta:
-        logger.info(f"☝️  Manual Approval Detected: {approval_meta.get('comment')}")
+        logger.info(f"Manual Approval: {approval_meta.get('comment')}")
         state.status = ProcessingStatus.COMPLETED
 
     if state.status == ProcessingStatus.COMPLETED or state.status == "APPROVED":
         try:
-            # Prepare text for Indexing (RAI Safe)
-            text_payload = f"""
-            FILE: {state.file_name}
-            STATUS: {state.status}
-            METADATA: {json.dumps(state.metadata)}
-            APPROVAL_NOTE: {approval_meta.get('comment', 'N/A')}
-            CONTENT:
-            {state.redacted_text or state.raw_text}
-            """
-            
-            indexer.process({
-                "text": text_payload, 
-                "filename": state.file_name, 
-                "metadata": {**state.metadata, "approval_reason": approval_meta.get("comment")}
-            })
-            logger.info(f"✅ Indexed {state.file_name} into RAG System")
-            
+            text_payload = f"FILE: {state.file_name}\nSTATUS: {state.status}\nNOTE: {approval_meta.get('comment', 'N/A')}\nCONTENT:\n{state.redacted_text or state.raw_text}"
+            indexer.process({"text": text_payload, "filename": state.file_name, "metadata": {**state.metadata, "approval_reason": approval_meta.get("comment")}})
+            logger.info(f"Indexed {state.file_name}")
         except Exception as e:
             logger.warning(f"Indexing failed: {e}")
 
-        # Archiving Logic
         try:
             source_path = Path(state.file_path)
             if source_path.exists():
                 dest_dir = settings.PROCESSED_DIR
                 if not dest_dir.exists(): dest_dir.mkdir(parents=True)
-                
                 timestamp = int(os.path.getmtime(source_path))
                 final_name = f"{timestamp}_{source_path.name}"
                 dest_path = dest_dir / final_name
-                
                 shutil.move(str(source_path), str(dest_path))
-                logger.info(f"📂 Archived to {dest_path}")
                 
-                # Update Report Pointer
                 report_path = settings.OUTPUT_DIR / f"{Path(state.file_name).stem}_report.json"
                 if report_path.exists():
                     with open(report_path, 'r+') as f:
@@ -82,13 +174,10 @@ async def ingestion_node(state: InvoiceState) -> InvoiceState:
                         f.seek(0)
                         json.dump(data, f, indent=2)
                         f.truncate()
-
         except Exception as e:
             logger.error(f"Archiving failed: {e}")
             
     return state
-
-# ... (Previous node definitions extraction_node, safety_node etc. remain similar but imports updated) ...
 
 def create_invoice_graph():
     wf = StateGraph(InvoiceState)

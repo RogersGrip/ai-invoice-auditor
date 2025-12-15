@@ -1,9 +1,6 @@
 import inspect
 from typing import List, Dict, Any, Callable
 from fastmcp import FastMCP
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from mcp.types import CallToolResult, ListToolsResult
 from src.core.protocol import MCPTool, MCPClient as BaseMCPClient
 from src.core.logger import logger
 
@@ -23,8 +20,6 @@ class LocalMCPClient(BaseMCPClient):
             if hasattr(self.server, "_resource_manager"):
                 for uri, res_obj in self.server._resource_manager._resources.items():
                     self._resources_map[uri] = res_obj.fn
-            
-            logger.info(f"MCP Client loaded {len(self._tools_map)} tools from {self.server.name}")
         except Exception as e:
             logger.error(f"Failed to load MCP registry: {e}")
 
@@ -47,16 +42,13 @@ class LocalMCPClient(BaseMCPClient):
         return tools
 
     def call_tool(self, name: str, arguments: Dict[str, Any], sampling: bool = False) -> Any:
-        logger.debug(f"MCP Call: {name} | Sampling: {sampling}")
-        
         if name not in self._tools_map:
             raise ValueError(f"Tool {name} not found in MCP server.")
             
         fn = self._tools_map[name]
         try:
-            # Simulate LLM Sampling if requested within the MCP Context
             if sampling:
-                logger.info("Sampling enabled for tool execution (Capability Check)")
+                logger.info(f"Sampling enabled for {name}")
             
             return fn(**arguments)
         except TypeError as e:

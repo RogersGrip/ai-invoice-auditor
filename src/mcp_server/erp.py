@@ -1,59 +1,48 @@
-import json
-from typing import Dict, Any, Optional
-from fastmcp import FastMCP
-from src.core.mock_data_loader import mock_db
+import uvicorn
+import asyncio
+from fastapi import FastAPI, HTTPException, Body
 from src.core.logger import logger
+from src.core.config import settings
+from src.core.state import InvoiceState
+from src.workflows.graph import create_invoice_graph
+from src.langgraph_agents.rag.indexer import IndexingAgent
+from pathlib import Path
+import json
 
-# Initialize FastMCP with Sampling Capability
-mcp = FastMCP(
-    "Mock ERP Agent", 
-    capabilities={
-        "sampling": {},  # Enable LLM Sampling support
-        "tools": {},
-        "resources": {}
-    }
-)
+app = FastAPI(title="AI Invoice Auditor Server")
+graph_app = create_invoice_graph()
 
-@mcp.tool()
-def validate_line_item(item_code: str, unit_price: float, currency: str = "USD") -> Dict[str, Any]:
-    """
-    Validates a single line item against the ERP Mock Database.
-    """
-    logger.debug(f"ERP Check: {item_code} @ {unit_price} {currency}")
+@app.post("/v1/approve")
+async def approve_invoice(payload: dict = Body(...)):
+    file_name = payload.get("file_name")
+    comment = payload.get("comment", "Manual Approval")
     
-    # Logic implementation ...
-    skus = mock_db.load_sku_master()
-    if not any(item["item_code"] == item_code for item in skus):
-        return {"status": "mismatch", "reason": f"SKU {item_code} not found."}
-
-    pos = mock_db.load_po_records()
-    found_price = None
-    for po in pos:
-        for line in po.get("line_items", []):
-            if line.get("item_code") == item_code:
-                found_price = float(line.get("unit_price", 0.0))
-                break
-        if found_price is not None: break
-
-    if found_price is None:
-        return {"status": "warning", "reason": "No PO price history."}
-
-    diff = abs(unit_price - found_price)
-    pct = (diff / found_price) * 100 if found_price > 0 else 100.0
-
-    if pct > 5.0:
-        return {
-            "status": "mismatch",
-            "reason": f"Price mismatch {pct:.2f}% (Inv: {unit_price}, ERP: {found_price})",
-            "erp_value": found_price
-        }
-
-    return {"status": "match", "reason": "Valid", "erp_value": found_price}
-
-@mcp.resource("erp://po_records")
-def get_po_records() -> str:
-    """Returns all Purchase Order records from the mock DB."""
-    return json.dumps(mock_db.load_po_records(), indent=2)
+    if not file_name: raise HTTPException(400, "file_name required")
+    logger.info(f"Manual Approval Request for {file_name} | Reason: {comment}")
+    
+    try:
+        indexer = IndexingAgent()
+        indexer.process({
+            "text": f"MANUAL APPROVAL for {file_name}\nReason: {comment}",
+            "filename": file_name,
+            "metadata": {"approval_status": "APPROVED", "approver_comment": comment}
+        })
+        
+        base = Path(file_name).stem
+        candidates = list(settings.OUTPUT_DIR.glob(f"*{base}*_report.json"))
+        if candidates:
+            with open(candidates[0], 'r+') as f:
+                data = json.load(f)
+                data['meta']['status'] = "APPROVED"
+                data['meta']['approval_comment'] = comment
+                f.seek(0)
+                json.dump(data, f, indent=2)
+                f.truncate()
+                
+        return {"status": "success", "message": f"Approved {file_name} and Indexed."}
+    except Exception as e:
+        logger.error(f"Approval Processing Failed: {e}")
+        raise HTTPException(500, str(e))
 
 if __name__ == "__main__":
-    mcp.run()
+    uvicorn.run(app, host="0.0.0.0", port=8000)

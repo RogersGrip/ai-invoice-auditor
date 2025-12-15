@@ -33,7 +33,7 @@ class MCPClient(ABC):
     @abstractmethod
     def list_tools(self) -> List[MCPTool]: pass
     @abstractmethod
-    def call_tool(self, name: str, arguments: Dict[str, Any]) -> Any: pass
+    def call_tool(self, name: str, arguments: Dict[str, Any], sampling: bool = False) -> Any: pass
 
 class Agent(ABC):
     @property
