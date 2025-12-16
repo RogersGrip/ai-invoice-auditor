@@ -1,3 +1,5 @@
+
+# ===== FILE: src/frontend/app.py =====
 import streamlit as st
 import os
 import time
@@ -43,7 +45,8 @@ st.markdown("""
     .stChatInput {
         position: fixed; bottom: 20px; padding-bottom: 20px;
         width: 100% !important; max-width: 1000px;
-        left: 55%; transform: translateX(-50%); z-index: 100;
+        left: 55%; transform: translateX(-50%);
+        z-index: 100;
     }
     div[data-testid="stChatMessageContent"] { min-width: 200px; }
     #MainMenu {visibility: hidden;}
@@ -74,31 +77,29 @@ def display_pdf(file_path):
         if file_path.lower().endswith(".pdf"):
             with open(file_path, "rb") as f:
                 base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-                pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
-                st.markdown(pdf_display, unsafe_allow_html=True)
+            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
+            st.markdown(pdf_display, unsafe_allow_html=True)
         else:
             st.image(file_path, width=700)
     except Exception as e:
         st.error(f"Error displaying file: {e}")
 
 def trigger_upload(fp):
-    """Call the clean /v1/upload endpoint."""
     try:
         try:
             requests.get(f"{API_URL}/health", timeout=1)
         except:
             return False, "Backend unreachable. Is ./run.sh running?"
-            
-        payload = {"file_path": str(fp), "file_type": "application/json" if fp.endswith(".json") else "application/pdf"}
         
+        payload = {"file_path": str(fp), "file_type": "application/json" if fp.endswith(".json") else "application/pdf"}
         res = requests.post(f"{API_URL}/v1/upload", json=payload, timeout=5)
+        
         if res.status_code == 200:
             return True, res.json()
         return False, f"Error {res.status_code}: {res.text}"
     except Exception as e:
         return False, str(e)
 
-# --- Sidebar ---
 with st.sidebar:
     st.markdown(f"## {PAGE_TITLE}")
     st.caption("Additional Capstone Project")
@@ -110,9 +111,8 @@ with st.sidebar:
         st.success(f"Online ({health.get('threads', 0)} Active Threads)")
     except:
         st.error("Offline")
-        
-    st.divider()
     
+    st.divider()
     status_p = settings.DATA_DIR / "status.json"
     if status_p.exists():
         try:
@@ -123,21 +123,21 @@ with st.sidebar:
         except: pass
     else:
         st.info("System Idle")
-        
+    
     st.divider()
     auto_refresh = st.toggle("Auto-Refresh Dashboard", value=False)
     if st.button("Force Refresh", width="stretch"): st.rerun()
+
     if auto_refresh:
         time.sleep(5)
         st.rerun()
 
-# --- Tabs ---
 tab_dashboard, tab_audit, tab_chat = st.tabs(["Dashboard", "Audit & Approval", "Assistant"])
 
 with tab_dashboard:
     st.header("Operations Center")
     col_metrics, col_upload = st.columns([2, 1])
-    
+
     with col_metrics:
         st.subheader("Live Queue")
         watch_files = []
@@ -149,11 +149,12 @@ with tab_dashboard:
                         "Detected": datetime.fromtimestamp(f.stat().st_mtime).strftime('%H:%M:%S'),
                         "Size (KB)": round(f.stat().st_size / 1024, 2)
                     })
+        
         if watch_files:
             st.dataframe(pd.DataFrame(watch_files), width="stretch", hide_index=True)
         else:
             st.info("Queue is empty. Waiting for invoices...")
-            
+        
         st.divider()
         st.subheader("Recently Processed")
         processed_files = []
@@ -162,12 +163,13 @@ with tab_dashboard:
                 if not f.name.startswith(".") and not f.name.endswith(".meta.json"):
                     processed_files.append({
                         "File": f.name,
-                        "Archived": datetime.fromtimestamp(f.stat().st_mtime).strftime('%Y-%m-%d %H:%M'),
+                        "Completed": datetime.fromtimestamp(f.stat().st_mtime).strftime('%Y-%m-%d %H:%M'),
                         "Status": "Archived"
                     })
+        
         if processed_files:
             st.dataframe(pd.DataFrame(processed_files), width="stretch", hide_index=True)
-            
+
     with col_upload:
         st.subheader("Manual Ingest")
         uploaded = st.file_uploader("Upload Invoices", type=["pdf", "png", "jpg", "json"], accept_multiple_files=True)
@@ -198,8 +200,9 @@ with tab_audit:
                     content = json.load(f)
                     invoice_data = content.get("data") or content.get("extracted_data", {})
                     meta = content.get("meta", {})
+                    
                     flat_record = {
-                        "path": str(r_file),
+                        "_path": str(r_file),
                         "_display_name": meta.get("file_name", r_file.name),
                         "_timestamp": meta.get("timestamp", ""),
                         "_status": meta.get("status", "UNKNOWN"),
@@ -212,14 +215,14 @@ with tab_audit:
                     reports.append(flat_record)
             except Exception as e:
                 pass
+    
     reports.sort(key=lambda x: x["_timestamp"], reverse=True)
     
     pending = [r for r in reports if r["_status"] not in ["COMPLETED", "APPROVED", "APPROVED_BY_HITL", "REJECTED"]]
     completed = [r for r in reports if r["_status"] in ["COMPLETED", "APPROVED", "APPROVED_BY_HITL", "REJECTED"]]
-    
+
     if pending:
         st.error(f"[ACTION REQUIRED] {len(pending)} Invoices Require Manual Review")
-        
         st.markdown("### Pending Reviews")
         h_col1, h_col2, h_col3, h_col4, h_col5 = st.columns([2, 1, 1, 1, 2])
         h_col1.markdown("**File Name**")
@@ -235,20 +238,24 @@ with tab_audit:
             data = r["data"]
             vendor = data.get("vendor_id", "Unknown")
             total = format_currency(data.get("total_amount", 0), data.get("currency", "USD"))
-            
+
             r_col1, r_col2, r_col3, r_col4, r_col5 = st.columns([2, 1, 1, 1, 2])
             r_col1.write(fname)
             r_col2.markdown(f"**{status}**")
             r_col3.write(vendor)
             r_col4.write(total)
-            
+
             with r_col5:
+                comment = st.text_input("Review Note", key=f"note_{fname}", placeholder="Reason for approval...")
+                
                 btn_col1, btn_col2 = st.columns(2)
+                
                 if btn_col1.button("Approve", key=f"app_{fname}", type="primary", width="stretch"):
-                     try:
+                    try:
+                        final_reason = comment if comment else "Approved via Table UI"
                         resp = requests.post(f"{API_URL}/v1/approve", json={
                             "file_name": fname,
-                            "reason": "Approved via Table UI",
+                            "reason": final_reason,
                             "approved_by": "Manager"
                         })
                         if resp.status_code == 200:
@@ -257,14 +264,15 @@ with tab_audit:
                             st.rerun()
                         else:
                             st.error(f"Error: {resp.text}")
-                     except Exception as e:
+                    except Exception as e:
                         st.error(str(e))
 
                 if btn_col2.button("Reject", key=f"rej_{fname}", type="secondary", width="stretch"):
                     try:
+                        final_reason = comment if comment else "Rejected via Table UI"
                         resp = requests.post(f"{API_URL}/v1/reject", json={
                             "file_name": fname,
-                            "reason": "Rejected via Table UI",
+                            "reason": final_reason,
                             "rejected_by": "Manager"
                         })
                         if resp.status_code == 200:
@@ -275,16 +283,19 @@ with tab_audit:
                             st.error(f"Error: {resp.text}")
                     except Exception as e:
                         st.error(str(e))
-            
+
             with st.expander(f"View Issues for {fname}"):
                 val = r["validation"]
                 safe = r["safety"]
+                
                 if not val.get("is_valid", True):
                     st.write("**Data Validation Failed:**")
                     for m in val.get("missing_fields", []): st.code(f"Missing: {m}")
+                
                 if val.get("business_status") == "mismatch":
                     st.write("**Business Logic Mismatch:**")
                     for d in val.get("discrepancies", []): st.warning(d)
+
                 if not safe.get("is_safe", True):
                     st.write("**Safety / PII Alert:**")
                     if safe.get("pii_detected"):
@@ -292,15 +303,17 @@ with tab_audit:
                     if safe.get("details"):
                         st.write(f"Details: {safe.get('details')}")
             st.divider()
+
     else:
         if completed:
             st.success("No Pending Reviews. All caught up.")
         else:
             st.info("No invoices processed yet.")
-            
+
     if completed:
         st.subheader(f"Audit History ({len(completed)})")
         selected_report_name = st.selectbox("Select Invoice to Audit", [r["_display_name"] for r in completed])
+        
         target_report = next((r for r in completed if r["_display_name"] == selected_report_name), None)
         
         if target_report:
@@ -312,16 +325,21 @@ with tab_audit:
                     src = metadata.get('source', 'Unknown Source')
                     ts = metadata.get('ingest_timestamp', 'N/A')
                     st.caption(f"**Source:** {src} | **Ingested:** {ts}")
+                
                 with h_col2:
                     st.markdown(render_status_badge(target_report["_status"]), unsafe_allow_html=True)
+                
                 st.divider()
+                
                 inv_data = target_report["data"]
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Vendor", inv_data.get("vendor_id", "N/A"))
                 m2.metric("Invoice #", inv_data.get("invoice_no", "N/A"))
                 m3.metric("Date", inv_data.get("invoice_date", "N/A"))
                 m4.metric("Total Amount", format_currency(inv_data.get("total_amount", 0), inv_data.get("currency", "USD")))
+                
                 st.divider()
+
                 sub_tab_data, sub_tab_compliance, sub_tab_pdf, sub_tab_raw = st.tabs(["Line Items", "Compliance & Safety", "View PDF", "Raw Data"])
                 
                 with sub_tab_data:
@@ -333,9 +351,10 @@ with tab_audit:
                         st.dataframe(df[existing_cols] if existing_cols else df, width="stretch", hide_index=True)
                     else:
                         st.info("No line items extracted.")
-                        
+
                 with sub_tab_compliance:
                     col_data_val, col_biz_val, col_safety = st.columns(3)
+                    
                     with col_data_val:
                         st.markdown("#### Data Integrity")
                         val = target_report["validation"]
@@ -347,6 +366,7 @@ with tab_audit:
                             for m in missing: st.code(m, language=None)
                         else:
                             st.success("All required fields present")
+                    
                     with col_biz_val:
                         st.markdown("#### Business Logic")
                         biz_status = val.get("business_status", "N/A").upper()
@@ -358,24 +378,28 @@ with tab_audit:
                             for d in discrepancies: st.caption(f"- {d}")
                         else:
                             st.success("Matches ERP Records")
+                    
                     with col_safety:
                         st.markdown("#### Safety & PII")
                         safe = target_report["safety"]
                         is_safe = safe.get("is_safe", True)
                         st.write(f"**Content Safety:** {'[SAFE]' if is_safe else '[FLAGGED]'}")
+                        
                         pii = safe.get("pii_detected", [])
                         if pii:
                             st.warning(f"**PII Detected:** {len(pii)}")
                             st.write(", ".join([f"`{p}`" for p in pii]))
                         else:
                             st.success("No PII Detected")
+
                         if safe.get("details"):
                             with st.expander("Safety Analysis Details"):
                                 st.write(safe.get("details"))
-                
+
                 with sub_tab_pdf:
-                    base_report_name = Path(target_report["path"]).stem
+                    base_report_name = Path(target_report["_path"]).stem
                     generated_pdf = settings.OUTPUT_DIR / f"{base_report_name}.pdf"
+                    
                     if generated_pdf.exists():
                         c_pdf_view, c_pdf_down = st.columns([4, 1])
                         with c_pdf_view:
@@ -385,7 +409,7 @@ with tab_audit:
                                 st.download_button("Download Report", f, file_name=generated_pdf.name, mime="application/pdf", width="stretch")
                     else:
                         st.warning("No generated PDF report found.")
-                
+
                 with sub_tab_raw:
                     st.markdown("**System Record (JSON):**")
                     st.json(target_report)
@@ -394,28 +418,26 @@ with tab_chat:
     st.header("Invoice Assistant")
     if "messages" not in st.session_state:
         st.session_state.messages = [{"role": "assistant", "content": "Hello! I can analyze your processed invoices. Ask me anything."}]
+
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
-            
+
     if prompt := st.chat_input("E.g., 'List all high-value items from Invoice 004'"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.chat_message("user").markdown(prompt)
-        
+
         with st.chat_message("assistant"):
             status_container = st.status("Thinking...", expanded=True)
             try:
                 status_container.write("Searching invoice database...")
-                
                 payload = {"query": prompt}
-                
                 response = requests.post(f"{API_URL}/v1/chat", json=payload, timeout=120)
                 
                 if response.status_code == 200:
                     status_container.write("Generating answer...")
                     data = response.json()
                     answer_text = data.get("answer", "No answer found.")
-                    
                     status_container.update(label="Complete", state="complete", expanded=False)
                     st.markdown(answer_text)
                     st.session_state.messages.append({"role": "assistant", "content": answer_text})

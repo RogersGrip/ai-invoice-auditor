@@ -1,3 +1,4 @@
+# ===== FILE: src/langgraph_agents/safety_agent.py =====
 import uuid
 import json
 from datetime import datetime, timezone
@@ -5,7 +6,6 @@ from typing import Dict, Any, List, Tuple
 from pydantic import BaseModel, Field
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
-
 from src.core.llm_wrapper import BedrockLLMService
 from src.core.protocol import Agent, AgentResponse
 from src.core.logger import logger
@@ -35,7 +35,6 @@ class SafetyAgent(Agent):
             results = self.analyzer.analyze(text=text, entities=["PHONE_NUMBER", "EMAIL_ADDRESS", "IBAN", "CREDIT_CARD", "US_SSN", "PERSON"], language='en')
             if not results:
                 return text, []
-            
             anonymized = self.anonymizer.anonymize(text=text, analyzer_results=results)
             detected = list(set([r.entity_type for r in results]))
             return anonymized.text, detected
@@ -46,7 +45,7 @@ class SafetyAgent(Agent):
     def _check_bias_and_injection(self, text: str) -> ToxicityAnalysis:
         if not self.llm_service:
             return ToxicityAnalysis(toxicity_score=0.0, is_biased=False, reasoning="LLM Offline")
-            
+        
         prompt = f"""
         [INST] You are an RAI Content Safety Auditor.
         Task: Analyze the input for:
@@ -88,22 +87,16 @@ class SafetyAgent(Agent):
             return self._build_response(SafetyReport(is_safe=True, details="Empty"), "", "safe", inputs)
 
         logger.info(f"Running RAI Guardrails for {file_name}")
-        
-        # 1. PII Redaction
+
         safe_text, pii_found = self._redact_pii(raw_text)
-        
-        # 2. LLM Analysis
         analysis = self._check_bias_and_injection(safe_text)
-        
-        # 3. Determine Safety Status (STRICT HITL TRIGGER)
-        # PII existence forces Unsafe/Flagged status to ensure HITL intervention.
-        is_safe = (analysis.toxicity_score < 0.8) and (not analysis.is_biased) and (len(pii_found) == 0)
-        
+
+        is_safe = (analysis.toxicity_score < 0.8) and (not analysis.is_biased)
         status = "safe" if is_safe else "flagged"
-        
+
         details = analysis.reasoning
         if pii_found:
-            details += f" | PII Detected: {', '.join(pii_found)}"
+            details += f" | PII Redacted: {', '.join(pii_found)}"
 
         report = SafetyReport(
             is_safe=is_safe,
@@ -112,9 +105,9 @@ class SafetyAgent(Agent):
             bias_detected=analysis.is_biased,
             details=details
         )
-        
-        logger.info(f"RAI Report: PII={len(pii_found)}, Score={analysis.toxicity_score}, Status={status}")
-        
+
+        logger.info(f"RAI Report: PII Redacted={len(pii_found)}, Score={analysis.toxicity_score}, Status={status}")
+
         return self._build_response(report, safe_text, status, inputs)
 
     def _build_response(self, report: SafetyReport, text: str, status: str, inputs: Dict[str, Any]) -> AgentResponse:
