@@ -15,7 +15,29 @@ mkdir -p data/invoices data/processed data/qdrant_storage outputs/reports logs
 
 # Dependencies check
 if command -v uv &> /dev/null; then
-    uv add a2a-sdk presidio-analyzer presidio-anonymizer fpdf2 fastapi uvicorn pydantic requests streamlit langchain-aws ragas qdrant-client loguru litellm > /dev/null 2>&1
+    # Ensure pip exists in the active venv before letting uv try to install packages
+    if python -c "import ensurepip, sys" >/dev/null 2>&1; then
+        python -m ensurepip --upgrade >/dev/null 2>&1 || true
+    fi
+
+    # If pip still isn't present, try the get-pip.py fallback
+    if ! python -c "import pip" >/dev/null 2>&1; then
+        echo "pip missing in venv; attempting to bootstrap pip..."
+        if command -v curl >/dev/null 2>&1; then
+            curl -sS https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py && python /tmp/get-pip.py >/dev/null 2>&1 || true
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO /tmp/get-pip.py https://bootstrap.pypa.io/get-pip.py && python /tmp/get-pip.py >/dev/null 2>&1 || true
+        else
+            echo "Warning: curl/wget not available; cannot fetch get-pip.py. Skipping uv package bootstrap."
+        fi
+    fi
+
+    # Only run uv add if pip is now available
+    if python -c "import pip" >/dev/null 2>&1; then
+        uv add a2a-sdk presidio-analyzer presidio-anonymizer fpdf2 fastapi uvicorn pydantic requests streamlit langchain-aws ragas qdrant-client loguru litellm > /dev/null 2>&1
+    else
+        echo "Warning: pip not available in venv; skipping automatic 'uv add' step. If services fail, activate your venv and install dependencies manually."
+    fi
 fi
 
 # Colors
