@@ -297,7 +297,7 @@ with tab_dashboard:
 
     with col_upload:
         st.subheader("Manual Ingest")
-        uploaded = st.file_uploader("Upload Invoices (PDF/IMG)", type=["pdf", "png", "jpg"], accept_multiple_files=True)
+        uploaded = st.file_uploader("Upload Invoices (PDF/IMG)", type=["pdf", "png", "jpg", "json"], accept_multiple_files=True)
         
         if uploaded and st.button(f"Process {len(uploaded)} Files", type="primary", use_container_width=True):
             status_bar = st.status("Initiating Upload...", expanded=True)
@@ -541,24 +541,17 @@ with tab_audit:
 
 # ==========================
 # TAB 3: ASSISTANT
-# ==========================
-with tab_chat:
-    st.header("Invoice Knowledge Assistant")
-    st.caption("Ask questions about processed invoices, totals, vendors, or specific line items.")
 
+# --- Tab 3: Chat ---
+with tab_chat:
+    st.header("💬 Invoice Assistant")
+    
     if "messages" not in st.session_state:
         st.session_state.messages = [{"role": "assistant", "content": "Hello! I can analyze your processed invoices. Ask me anything."}]
 
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
-            if isinstance(msg["content"], dict) and "structured_data" in msg["content"]:
-                # Show summary then data
-                st.markdown(msg["content"].get("text_summary", ""))
-                display_structured_invoice(msg["content"]["structured_data"])
-            elif isinstance(msg["content"], dict):
-                st.json(msg["content"])
-            else:
-                st.markdown(msg["content"])
+            st.markdown(msg["content"])
 
     if prompt := st.chat_input("E.g., 'List all high-value items from Invoice 004'"):
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -568,17 +561,14 @@ with tab_chat:
             # UI PROGRESS INDICATOR
             status_container = st.status("Thinking...", expanded=True)
             try:
-                status_container.write("Searching invoice database...")
+                status_container.write("🔍 Searching invoice database...")
                 
-                # Payload with nested message inside params to fix 422
+                # Payload with messageId
                 payload = {
-                    "id": str(uuid.uuid4()),
-                    "params": {
-                        "message": {
-                            "messageId": str(uuid.uuid4()), 
-                            "role": "user", 
-                            "parts": [{"text": prompt}]
-                        }
+                    "message": {
+                        "messageId": str(uuid.uuid4()), 
+                        "role": "user", 
+                        "parts": [{"text": prompt}]
                     }
                 }
                 
@@ -586,39 +576,18 @@ with tab_chat:
                 response = requests.post(f"{API_URL}/v1/message:send", json=payload, timeout=120)
                 
                 if response.status_code == 200:
-                    status_container.write("Generating answer...")
+                    status_container.write("🧠 Generating answer...")
                     data = response.json()
-                    
-                    # Robust parsing of response
-                    raw_text = data.get("message", {}).get("parts", [{}])[0].get("text", "No response content.")
-                    
-                    # Try to detect JSON for structured display
-                    parsed_content = raw_text
-                    try:
-                        if "{" in raw_text and "}" in raw_text:
-                            import re
-                            match = re.search(r"\{.*\}", raw_text.replace("\n", ""), re.DOTALL)
-                            if match:
-                                json_data = json.loads(match.group(0))
-                                st.write("Found structured invoice data:")
-                                display_structured_invoice(json_data)
-                                parsed_content = {
-                                    "text_summary": raw_text.split("{")[0].strip() or "Found data:",
-                                    "structured_data": json_data
-                                }
-                            else:
-                                st.markdown(raw_text)
-                        else:
-                            st.markdown(raw_text)
-                    except:
-                        st.markdown(raw_text)
+                    answer_text = data.get("message", {}).get("parts", [{}])[0].get("text", "No response content.")
                     
                     status_container.update(label="Complete", state="complete", expanded=False)
-                    st.session_state.messages.append({"role": "assistant", "content": parsed_content})
+                    st.markdown(answer_text)
+                    st.session_state.messages.append({"role": "assistant", "content": answer_text})
                 else:
                     status_container.update(label="Error", state="error")
                     err_msg = f"Server Error {response.status_code}: {response.text}"
                     st.error(err_msg)
+                    # st.session_state.messages.append({"role": "assistant", "content": err_msg})
                     
             except Exception as e:
                 status_container.update(label="Connection Failed", state="error")
