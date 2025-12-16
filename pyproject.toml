@@ -31,6 +31,8 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=3.0.0",
     "langchain-aws>=1.1.0",
     "google-adk>=1.21.0",
+    "langfuse",
+    "a2a-sdk"
 ]
 
 [tool.ruff]

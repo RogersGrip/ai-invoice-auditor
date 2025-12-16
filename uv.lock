@@ -8,10 +8,28 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "a2a-sdk"
+version = "0.3.21"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", version = "2.25.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
+    { name = "google-api-core", version = "2.28.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "httpx" },
+    { name = "httpx-sse" },
+    { name = "protobuf" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/13/d3/bff391f9be2e56bdccb8f1fb7058a88e03582010890f1c3622174244972d/a2a_sdk-0.3.21.tar.gz", hash = "sha256:627aa841187540f5975625c7f0383754795d55fe3e774073f2741c5bdd7c9972", size = 231305, upload-time = "2025-12-12T17:05:31.755Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/33/02/26f02c84d7037dbd5c662140434f6e5085e3fe13d9c1e85984852af06930/a2a_sdk-0.3.21-py3-none-any.whl", hash = "sha256:5d817dd424a4396587416241de1342a97d6a8bb1c0b31a47d8dc6546b389ab68", size = 144138, upload-time = "2025-12-12T17:05:29.8Z" },
+]
+
+[[package]]
 name = "ai-invoice-auditor"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "a2a-sdk" },
     { name = "fastmcp" },
     { name = "fpdf" },
     { name = "google-adk" },
@@ -42,6 +60,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "a2a-sdk" },
     { name = "fastmcp", specifier = ">=0.1.0" },
     { name = "fpdf", specifier = ">=1.7.2" },
     { name = "google-adk", specifier = ">=1.21.0" },
@@ -54,6 +73,7 @@ requires-dist = [
     { name = "langchain-litellm", specifier = ">=0.3.2" },
     { name = "langchain-text-splitters", specifier = ">=0.0.1" },
     { name = "langdetect", specifier = ">=1.0.9" },
+    { name = "langfuse" },
     { name = "langfuse", specifier = ">=2.0.0" },
     { name = "langgraph", specifier = ">=0.0.10" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=3.0.0" },

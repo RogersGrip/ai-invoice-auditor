@@ -13,9 +13,9 @@ rm -f data/checkpoints.sqlite*
 mkdir -p data/invoices data/processed data/qdrant_storage outputs/reports logs
 
 # Dependencies check
-if command -v uv &> /dev/null; then
-    uv pip install fastapi uvicorn pydantic requests streamlit langchain-aws ragas fpdf qdrant-client loguru litellm > /dev/null 2>&1
-fi
+# if command -v uv &> /dev/null; then
+#     uv pip install fastapi uvicorn pydantic requests streamlit langchain-aws ragas fpdf qdrant-client loguru litellm > /dev/null 2>&1
+# fi
 
 # Colors
 CYAN='\033[0;36m'
@@ -24,7 +24,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo -e "${CYAN}Starting A2A Backend Server (Port 8000)...${NC}"
-python -W ignore src/server.py &
+python -m src.server &
 BACKEND_PID=$!
 
 cleanup() {
