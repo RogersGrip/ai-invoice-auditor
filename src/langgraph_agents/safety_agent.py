@@ -5,6 +5,7 @@ from typing import Dict, Any, List, Tuple
 from pydantic import BaseModel, Field
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
+
 from src.core.llm_wrapper import BedrockLLMService
 from src.core.protocol import Agent, AgentResponse
 from src.core.logger import logger
@@ -45,7 +46,7 @@ class SafetyAgent(Agent):
     def _check_bias_and_injection(self, text: str) -> ToxicityAnalysis:
         if not self.llm_service:
             return ToxicityAnalysis(toxicity_score=0.0, is_biased=False, reasoning="LLM Offline")
-        
+            
         prompt = f"""
         [INST] You are an RAI Content Safety Auditor.
         Task: Analyze the input for:
@@ -88,23 +89,32 @@ class SafetyAgent(Agent):
 
         logger.info(f"Running RAI Guardrails for {file_name}")
         
+        # 1. PII Redaction
         safe_text, pii_found = self._redact_pii(raw_text)
         
+        # 2. LLM Analysis
         analysis = self._check_bias_and_injection(safe_text)
         
-        is_safe = analysis.toxicity_score < 0.8 and not analysis.is_biased
+        # 3. Determine Safety Status (STRICT HITL TRIGGER)
+        # PII existence forces Unsafe/Flagged status to ensure HITL intervention.
+        is_safe = (analysis.toxicity_score < 0.8) and (not analysis.is_biased) and (len(pii_found) == 0)
+        
         status = "safe" if is_safe else "flagged"
         
+        details = analysis.reasoning
+        if pii_found:
+            details += f" | PII Detected: {', '.join(pii_found)}"
+
         report = SafetyReport(
             is_safe=is_safe,
             pii_detected=pii_found,
             toxicity_score=analysis.toxicity_score,
             bias_detected=analysis.is_biased,
-            details=analysis.reasoning
+            details=details
         )
-
+        
         logger.info(f"RAI Report: PII={len(pii_found)}, Score={analysis.toxicity_score}, Status={status}")
-
+        
         return self._build_response(report, safe_text, status, inputs)
 
     def _build_response(self, report: SafetyReport, text: str, status: str, inputs: Dict[str, Any]) -> AgentResponse:
