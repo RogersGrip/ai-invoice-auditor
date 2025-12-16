@@ -1,4 +1,3 @@
-# ===== FILE: src/adk_agents/translation_agent.py =====
 import uuid
 from typing import Dict, Any
 from datetime import datetime, timezone

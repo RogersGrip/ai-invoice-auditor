@@ -1,4 +1,3 @@
-# ===== FILE: src/adk_agents/monitor_agent.py =====
 import uuid
 import shutil
 import os

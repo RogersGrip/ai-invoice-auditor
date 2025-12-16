@@ -1,4 +1,3 @@
-# ===== FILE: src/adk_agents/reporting_agent.py =====
 import uuid
 import asyncio
 from typing import Dict, Any

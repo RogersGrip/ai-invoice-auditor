@@ -1,4 +1,3 @@
-# ===== FILE: /home/labuser/Desktop/Additional Capstone Project/ai-invoice-auditor/run_full_system.py =====
 import subprocess
 import sys
 import time

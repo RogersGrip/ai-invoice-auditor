@@ -1,4 +1,3 @@
-# ===== FILE: src/adk_agents/business_validator_agent.py =====
 import json
 import uuid
 from typing import Dict, Any

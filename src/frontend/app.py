@@ -1,5 +1,4 @@
 
-# ===== FILE: src/frontend/app.py =====
 import streamlit as st
 import os
 import time

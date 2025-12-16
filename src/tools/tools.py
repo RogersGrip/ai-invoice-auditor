@@ -1,46 +1,32 @@
-# ===== FILE: src/tools/tools.py =====
 import json
 import os
 import warnings
+import re
 from typing import Dict, Any, List, Optional
 from fpdf.enums import XPos, YPos
 from pathlib import Path
 from datetime import datetime, timezone
 from fpdf import FPDF
-
-# --- Official Google ADK Imports ---
 from google.adk.tools import BaseTool
 from google.genai.types import FunctionDeclaration, Schema, Type
-
-# --- Core Imports ---
 from src.core.config import settings
 from src.core.logger import logger
 from src.database.qdrant_db import vector_store
 from src.tools.ocr_engine import OCREngine
 from src.core.state import InvoiceData
 from src.core.llm_wrapper import BedrockLLMService
-
-# --- LangChain/AWS Imports ---
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_aws import ChatBedrockConverse, BedrockEmbeddings
 from ragas import evaluate
-from ragas.metrics import (
-    faithfulness, 
-    answer_relevancy, 
-    context_precision, 
-    context_recall, 
-    answer_correctness
-)
+from ragas.metrics import faithfulness, answer_relevancy, context_precision, context_recall, answer_correctness
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
 from datasets import Dataset
 
-# --- Suppress Noise ---
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-# --- Observability ---
 try:
     if settings.LANGFUSE_PUBLIC_KEY:
         from langfuse import observe
@@ -78,8 +64,33 @@ class DataCompletenessCheckerTool(BaseTool):
     def _get_declaration(self): return FunctionDeclaration(name=self.name, description=self.description, parameters=Schema(type=Type.OBJECT, properties={"invoice_data": Schema(type=Type.OBJECT)}, required=["invoice_data"]))
     def run(self, args):
         data = args.get("invoice_data", {})
-        missing = [f for f in ["invoice_no", "invoice_date", "total_amount", "vendor_id"] if not data.get(f)]
-        return {"validation_status": "valid" if not missing else "invalid", "missing_fields": missing}
+        issues = []
+        try:
+            llm = BedrockLLMService(model_id=settings.VALIDATION_MODEL, temperature=0.0)
+            prompt = f"Analyze data for accuracy, logic and formatting. Return JSON with key 'issues' list. Data: {json.dumps(data)}"
+            response_text = llm.invoke(prompt)
+            cleaned_text = re.sub(r"```json|```", "", response_text).strip()
+            llm_result = json.loads(cleaned_text)
+            if "issues" in llm_result and isinstance(llm_result["issues"], list):
+                for issue in llm_result["issues"]:
+                    if issue not in issues:
+                        issues.append(f"[AI] {issue}")
+        except Exception:
+            pass
+        if not issues:
+            required = ["invoice_no", "invoice_date", "total_amount", "vendor_id"]
+            for f in required:
+                if not data.get(f):
+                    issues.append(f"Missing Field: {f}")
+            try:
+                total_amt = float(data.get("total_amount", 0.0))
+                items = data.get("line_items", [])
+                calculated_sum = sum(float(i.get("total", 0.0)) for i in items)
+                if items and calculated_sum > total_amt:
+                    issues.append(f"Math Error: Items Total ({calculated_sum}) > Invoice Total ({total_amt})")
+            except Exception:
+                pass
+        return {"validation_status": "valid" if not issues else "invalid", "missing_fields": issues}
 
 class BusinessValidationTool(BaseTool):
     def __init__(self): super().__init__(name="business_validation_tool", description="Checks ERP.")
@@ -88,93 +99,53 @@ class BusinessValidationTool(BaseTool):
 class InsightReporterTool(BaseTool):
     def __init__(self):
         super().__init__(name="insight_reporter_tool", description="Generates reports.")
-
     def _get_declaration(self):
-        return FunctionDeclaration(
-            name=self.name, description=self.description,
-            parameters=Schema(type=Type.OBJECT, properties={"file_name": Schema(type=Type.STRING)}, required=["file_name"])
-        )
-
+        return FunctionDeclaration(name=self.name, description=self.description, parameters=Schema(type=Type.OBJECT, properties={"file_name": Schema(type=Type.STRING)}, required=["file_name"]))
     def _sanitize(self, text: Any) -> str:
         if text is None: return "N/A"
         text = str(text)
-        # Handle common currency/special chars
         replacements = {"€": "EUR", "£": "GBP", "¥": "JPY", "₹": "INR", "‘": "'", "’": "'", "“": '"', "”": '"'}
         for char, repl in replacements.items():
             text = text.replace(char, repl)
-        # Force Latin-1 for FPDF
         return text.encode('latin-1', 'replace').decode('latin-1')
-
     def run(self, args: Dict[str, Any]) -> Dict[str, str]:
         file_name = args.get("file_name", "unknown_report")
         extracted_data = args.get("extracted_data", {})
         validation_report = args.get("validation_report", {})
         safety_report = args.get("safety_report", {})
         metadata = args.get("metadata", {})
-        approval_info = args.get("approval_info")  # Check for HITL approval
-
+        approval_info = args.get("approval_info")
         base_name = Path(file_name).stem
         json_path = settings.OUTPUT_DIR / f"{base_name}_report.json"
         pdf_path = settings.OUTPUT_DIR / f"{base_name}_report.pdf"
-        
-        # Determine Status
         status = "COMPLETED"
         if safety_report and not safety_report.get("is_safe"): status = "FLAGGED"
         elif validation_report and not validation_report.get("is_valid"): status = "DATA_INVALID"
         elif validation_report.get("business_status") == "mismatch": status = "BUSINESS_MISMATCH"
-        
-        # Override status if explicitly approved
-        if approval_info:
-            status = "APPROVED_BY_HITL"
-
-        # Save JSON
-        report_data = {
-            "meta": {
-                "file_name": file_name,
-                "status": status,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "metadata": metadata
-            },
-            "data": extracted_data,
-            "validation": validation_report,
-            "safety": safety_report,
-            "approval": approval_info
-        }
-        with open(json_path, 'w') as f:
-            json.dump(report_data, f, indent=2)
-
-        # Generate PDF
+        if approval_info: status = "APPROVED_BY_HITL"
+        report_data = {"meta": {"file_name": file_name, "status": status, "timestamp": datetime.now(timezone.utc).isoformat(), "metadata": metadata}, "data": extracted_data, "validation": validation_report, "safety": safety_report, "approval": approval_info}
+        with open(json_path, 'w') as f: json.dump(report_data, f, indent=2)
         try:
             pdf = FPDF()
             pdf.add_page()
-            
-            # 1. Header
             pdf.set_fill_color(240, 248, 255)
             pdf.set_font("Helvetica", 'B', 16)
-            pdf.cell(0, 15, "AI Invoice Auditor Report", new_x=XPos.LMARGIN,
-    new_y=YPos.NEXT, align='C', fill=True, border=1)
+            pdf.cell(0, 15, "AI Invoice Auditor Report", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C', fill=True, border=1)
             pdf.ln(5)
-
-            # 2. Metadata
             pdf.set_font("Helvetica", 'B', 10)
             pdf.cell(30, 6, "File Name:", border=0)
             pdf.set_font("Helvetica", '', 10)
             pdf.cell(0, 6, self._sanitize(file_name), border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            
             pdf.set_font("Helvetica", 'B', 10)
             pdf.cell(30, 6, "Status:", border=0)
-            
-            if "APPROVED" in status or status == "COMPLETED": pdf.set_text_color(0, 128, 0) # Green
-            elif status in ["FLAGGED", "DATA_INVALID"]: pdf.set_text_color(200, 0, 0) # Red
-            else: pdf.set_text_color(255, 140, 0) # Orange
-            
+            if "APPROVED" in status or status == "COMPLETED": pdf.set_text_color(0, 128, 0)
+            elif status in ["FLAGGED", "DATA_INVALID"]: pdf.set_text_color(200, 0, 0)
+            else: pdf.set_text_color(255, 140, 0)
             pdf.cell(0, 6, status, border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            pdf.set_text_color(0, 0, 0) # Reset Black
+            pdf.set_text_color(0, 0, 0)
             pdf.ln(5)
-
-            # 2.5 Approval Info (if present)
             if approval_info:
-                pdf.set_fill_color(240, 255, 240) # Light Green
+                pdf.set_fill_color(240, 255, 240)
                 pdf.set_font("Helvetica", 'B', 10)
                 pdf.cell(0, 8, " HITL Approval / Override", new_x=XPos.LMARGIN, new_y=YPos.NEXT, fill=True, border=1)
                 pdf.set_font("Helvetica", 'I', 10)
@@ -182,84 +153,64 @@ class InsightReporterTool(BaseTool):
                 reason = approval_info.get("reason", "No reason provided")
                 pdf.multi_cell(0, 6, self._sanitize(f"Approved By: {by}\nReason: {reason}"))
                 pdf.ln(2)
-
-            # 3. Invoice Details
             pdf.set_fill_color(230, 230, 250)
             pdf.set_font("Helvetica", 'B', 12)
             pdf.cell(0, 8, " Extracted Invoice Data", new_x=XPos.LMARGIN, new_y=YPos.NEXT, fill=True, border=1)
             pdf.set_font("Helvetica", '', 10)
             pdf.ln(2)
-            
-            # Simple Key-Value
             fields = ["invoice_no", "invoice_date", "vendor_id", "total_amount", "currency"]
             for field in fields:
                 val = extracted_data.get(field, "N/A")
                 pdf.cell(40, 6, field.replace("_", " ").title(), border=1)
                 pdf.cell(0, 6, self._sanitize(val), border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.ln(2)
-            
-            # Line Items Table
             items = extracted_data.get("line_items", [])
             if items:
                 pdf.set_font("Helvetica", 'B', 10)
                 pdf.cell(0, 6, f"Line Items ({len(items)})", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                 pdf.set_font("Helvetica", '', 9)
-                
-                # Header
                 pdf.set_fill_color(245, 245, 245)
                 pdf.cell(90, 6, "Description / Code", border=1, fill=True)
                 pdf.cell(20, 6, "Qty", border=1, fill=True)
                 pdf.cell(30, 6, "Price", border=1, fill=True)
                 pdf.cell(30, 6, "Total", border=1, fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                
-                # Rows
                 for item in items:
                     desc = item.get("item_code") or item.get("description") or "Item"
                     qty = str(item.get("qty", 0))
                     price = str(item.get("unit_price", 0))
                     total = str(item.get("total", 0))
-                    
                     pdf.cell(90, 6, self._sanitize(desc[:50]), border=1)
                     pdf.cell(20, 6, qty, border=1)
                     pdf.cell(30, 6, price, border=1)
                     pdf.cell(30, 6, total, border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            pdf.ln(5)
-
-            # 4. Audit Results
+                pdf.ln(5)
             pdf.set_fill_color(255, 250, 205)
             pdf.set_font("Helvetica", 'B', 12)
             pdf.cell(0, 8, " Validation & Audit", new_x=XPos.LMARGIN, new_y=YPos.NEXT, fill=True, border=1)
             pdf.set_font("Helvetica", '', 10)
             pdf.ln(2)
-            
             valid = validation_report.get("is_valid", False)
             biz_status = validation_report.get("business_status", "N/A")
-            
             pdf.cell(50, 6, "Data Integrity:", border=1)
             pdf.cell(0, 6, "PASS" if valid else "FAIL", border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            
             pdf.cell(50, 6, "ERP Match:", border=1)
             pdf.cell(0, 6, self._sanitize(biz_status.upper()), border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            
             discrepancies = validation_report.get("discrepancies", [])
             missing = validation_report.get("missing_fields", [])
-            
             if discrepancies or missing:
                 pdf.ln(2)
                 pdf.set_text_color(200, 0, 0)
                 pdf.set_font("Helvetica", 'B', 10)
+                pdf.set_x(pdf.l_margin)
                 pdf.cell(0, 6, "Issues Found:", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                 pdf.set_font("Helvetica", '', 10)
-                for d in discrepancies:
-                    pdf.multi_cell(0, 6, f"- {self._sanitize(d)}")
-                for m in missing:
-                    pdf.multi_cell(0, 6, f"- Missing Field: {self._sanitize(m)}")
-                pdf.set_text_color(0, 0, 0)
-
+                width = pdf.epw
+                for d in discrepancies: pdf.multi_cell(width, 6, f"- {self._sanitize(d)}")
+                for m in missing: pdf.multi_cell(width, 6, f"- Missing Field: {self._sanitize(m)}")
+            pdf.set_text_color(0, 0, 0)
             pdf.output(str(pdf_path))
         except Exception as e:
             logger.error(f"PDF Gen failed: {e}")
-        
         return {"json": str(json_path), "pdf": str(pdf_path)}
 
 class VectorIndexerTool(BaseTool):
@@ -290,43 +241,16 @@ class RAGEvaluatorTool(BaseTool):
     def _get_declaration(self): return FunctionDeclaration(name=self.name, description=self.description, parameters=Schema(type=Type.OBJECT, properties={"query": Schema(type=Type.STRING)}, required=["query"]))
     def run(self, args):
         try:
-            eval_llm = LangchainLLMWrapper(ChatBedrockConverse(
-                model=settings.VALIDATION_MODEL, 
-                temperature=0.0, 
-                region_name="us-east-1"
-            ))
-            
-            eval_embeddings = LangchainEmbeddingsWrapper(BedrockEmbeddings(
-                model_id=settings.EMBEDDING_MODEL, 
-                region_name="us-east-1"
-            ))
-
-            data = {
-                "question": [args["query"]], 
-                "answer": [args["answer"]], 
-                "contexts": [[args["context"]]],
-                "ground_truth": [args["answer"]] # Placeholder for consistency
-            }
+            eval_llm = LangchainLLMWrapper(ChatBedrockConverse(model=settings.VALIDATION_MODEL, temperature=0.0, region_name="us-east-1"))
+            eval_embeddings = LangchainEmbeddingsWrapper(BedrockEmbeddings(model_id=settings.EMBEDDING_MODEL, region_name="us-east-1"))
+            data = {"question": [args["query"]], "answer": [args["answer"]], "contexts": [[args["context"]]], "ground_truth": [args["answer"]]}
             dataset = Dataset.from_dict(data)
-            
-            # --- 5 METRICS ---
-            res = evaluate(
-                dataset=dataset, 
-                metrics=[faithfulness, answer_relevancy, context_precision, context_recall, answer_correctness], 
-                llm=eval_llm, 
-                embeddings=eval_embeddings, 
-                raise_exceptions=False
-            )
-            
+            res = evaluate(dataset=dataset, metrics=[faithfulness, answer_relevancy, context_precision, context_recall, answer_correctness], llm=eval_llm, embeddings=eval_embeddings, raise_exceptions=False)
             df = res.to_pandas()
             if df.empty: return json.dumps({"status": "empty_eval"})
-            
             row = df.iloc[0].to_dict()
-            metrics = {k: (float(v) if v == v else 0.0) for k, v in row.items() 
-                       if isinstance(v, (int, float)) and k not in ["question", "answer", "contexts", "ground_truth"]}
-            
+            metrics = {k: (float(v) if v == v else 0.0) for k, v in row.items() if isinstance(v, (int, float)) and k not in ["question", "answer", "contexts", "ground_truth"]}
             return json.dumps(metrics)
-            
         except Exception as e:
             logger.warning(f"Ragas Evaluation Failed: {e}")
             return json.dumps({"faithfulness": 0.0, "error": str(e)})

@@ -1,4 +1,3 @@
-# ===== FILE: src/adk_agents/validation_agent.py =====
 import uuid
 from typing import Dict, Any
 from datetime import datetime, timezone

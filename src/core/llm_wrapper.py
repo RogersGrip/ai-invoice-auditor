@@ -1,4 +1,3 @@
-# ===== FILE: src/core/llm_wrapper.py =====
 import os
 from typing import Any, List, Optional
 from langchain_aws import ChatBedrockConverse

@@ -1,4 +1,3 @@
-# ===== FILE: src/adk_agents/base_agent.py =====
 import asyncio
 import os
 import warnings
