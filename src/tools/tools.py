@@ -3,6 +3,7 @@ import json
 import os
 import warnings
 from typing import Dict, Any, List, Optional
+from fpdf.enums import XPos, YPos
 from pathlib import Path
 from datetime import datetime, timezone
 from fpdf import FPDF
@@ -149,33 +150,34 @@ class InsightReporterTool(BaseTool):
             
             # 1. Header
             pdf.set_fill_color(240, 248, 255)
-            pdf.set_font("Arial", 'B', 16)
-            pdf.cell(0, 15, "AI Invoice Auditor Report", ln=1, align='C', fill=True, border=1)
+            pdf.set_font("Helvetica", 'B', 16)
+            pdf.cell(0, 15, "AI Invoice Auditor Report", new_x=XPos.LMARGIN,
+    new_y=YPos.NEXT, align='C', fill=True, border=1)
             pdf.ln(5)
 
             # 2. Metadata
-            pdf.set_font("Arial", 'B', 10)
+            pdf.set_font("Helvetica", 'B', 10)
             pdf.cell(30, 6, "File Name:", border=0)
-            pdf.set_font("Arial", '', 10)
-            pdf.cell(0, 6, self._sanitize(file_name), border=0, ln=1)
+            pdf.set_font("Helvetica", '', 10)
+            pdf.cell(0, 6, self._sanitize(file_name), border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
-            pdf.set_font("Arial", 'B', 10)
+            pdf.set_font("Helvetica", 'B', 10)
             pdf.cell(30, 6, "Status:", border=0)
             
             if "APPROVED" in status or status == "COMPLETED": pdf.set_text_color(0, 128, 0) # Green
             elif status in ["FLAGGED", "DATA_INVALID"]: pdf.set_text_color(200, 0, 0) # Red
             else: pdf.set_text_color(255, 140, 0) # Orange
             
-            pdf.cell(0, 6, status, border=0, ln=1)
+            pdf.cell(0, 6, status, border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.set_text_color(0, 0, 0) # Reset Black
             pdf.ln(5)
 
             # 2.5 Approval Info (if present)
             if approval_info:
                 pdf.set_fill_color(240, 255, 240) # Light Green
-                pdf.set_font("Arial", 'B', 10)
-                pdf.cell(0, 8, " HITL Approval / Override", ln=1, fill=True, border=1)
-                pdf.set_font("Arial", 'I', 10)
+                pdf.set_font("Helvetica", 'B', 10)
+                pdf.cell(0, 8, " HITL Approval / Override", new_x=XPos.LMARGIN, new_y=YPos.NEXT, fill=True, border=1)
+                pdf.set_font("Helvetica", 'I', 10)
                 by = approval_info.get("approved_by", "Unknown")
                 reason = approval_info.get("reason", "No reason provided")
                 pdf.multi_cell(0, 6, self._sanitize(f"Approved By: {by}\nReason: {reason}"))
@@ -183,9 +185,9 @@ class InsightReporterTool(BaseTool):
 
             # 3. Invoice Details
             pdf.set_fill_color(230, 230, 250)
-            pdf.set_font("Arial", 'B', 12)
-            pdf.cell(0, 8, " Extracted Invoice Data", ln=1, fill=True, border=1)
-            pdf.set_font("Arial", '', 10)
+            pdf.set_font("Helvetica", 'B', 12)
+            pdf.cell(0, 8, " Extracted Invoice Data", new_x=XPos.LMARGIN, new_y=YPos.NEXT, fill=True, border=1)
+            pdf.set_font("Helvetica", '', 10)
             pdf.ln(2)
             
             # Simple Key-Value
@@ -193,22 +195,22 @@ class InsightReporterTool(BaseTool):
             for field in fields:
                 val = extracted_data.get(field, "N/A")
                 pdf.cell(40, 6, field.replace("_", " ").title(), border=1)
-                pdf.cell(0, 6, self._sanitize(val), border=1, ln=1)
+                pdf.cell(0, 6, self._sanitize(val), border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.ln(2)
             
             # Line Items Table
             items = extracted_data.get("line_items", [])
             if items:
-                pdf.set_font("Arial", 'B', 10)
-                pdf.cell(0, 6, f"Line Items ({len(items)})", ln=1)
-                pdf.set_font("Arial", '', 9)
+                pdf.set_font("Helvetica", 'B', 10)
+                pdf.cell(0, 6, f"Line Items ({len(items)})", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.set_font("Helvetica", '', 9)
                 
                 # Header
                 pdf.set_fill_color(245, 245, 245)
                 pdf.cell(90, 6, "Description / Code", border=1, fill=True)
                 pdf.cell(20, 6, "Qty", border=1, fill=True)
                 pdf.cell(30, 6, "Price", border=1, fill=True)
-                pdf.cell(30, 6, "Total", border=1, fill=True, ln=1)
+                pdf.cell(30, 6, "Total", border=1, fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                 
                 # Rows
                 for item in items:
@@ -220,24 +222,24 @@ class InsightReporterTool(BaseTool):
                     pdf.cell(90, 6, self._sanitize(desc[:50]), border=1)
                     pdf.cell(20, 6, qty, border=1)
                     pdf.cell(30, 6, price, border=1)
-                    pdf.cell(30, 6, total, border=1, ln=1)
+                    pdf.cell(30, 6, total, border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.ln(5)
 
             # 4. Audit Results
             pdf.set_fill_color(255, 250, 205)
-            pdf.set_font("Arial", 'B', 12)
-            pdf.cell(0, 8, " Validation & Audit", ln=1, fill=True, border=1)
-            pdf.set_font("Arial", '', 10)
+            pdf.set_font("Helvetica", 'B', 12)
+            pdf.cell(0, 8, " Validation & Audit", new_x=XPos.LMARGIN, new_y=YPos.NEXT, fill=True, border=1)
+            pdf.set_font("Helvetica", '', 10)
             pdf.ln(2)
             
             valid = validation_report.get("is_valid", False)
             biz_status = validation_report.get("business_status", "N/A")
             
             pdf.cell(50, 6, "Data Integrity:", border=1)
-            pdf.cell(0, 6, "PASS" if valid else "FAIL", border=1, ln=1)
+            pdf.cell(0, 6, "PASS" if valid else "FAIL", border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
             pdf.cell(50, 6, "ERP Match:", border=1)
-            pdf.cell(0, 6, self._sanitize(biz_status.upper()), border=1, ln=1)
+            pdf.cell(0, 6, self._sanitize(biz_status.upper()), border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
             discrepancies = validation_report.get("discrepancies", [])
             missing = validation_report.get("missing_fields", [])
@@ -245,9 +247,9 @@ class InsightReporterTool(BaseTool):
             if discrepancies or missing:
                 pdf.ln(2)
                 pdf.set_text_color(200, 0, 0)
-                pdf.set_font("Arial", 'B', 10)
-                pdf.cell(0, 6, "Issues Found:", ln=1)
-                pdf.set_font("Arial", '', 10)
+                pdf.set_font("Helvetica", 'B', 10)
+                pdf.cell(0, 6, "Issues Found:", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.set_font("Helvetica", '', 10)
                 for d in discrepancies:
                     pdf.multi_cell(0, 6, f"- {self._sanitize(d)}")
                 for m in missing:

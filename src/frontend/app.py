@@ -126,7 +126,7 @@ with st.sidebar:
         
     st.divider()
     auto_refresh = st.toggle("Auto-Refresh Dashboard", value=False)
-    if st.button("Force Refresh", use_container_width=True): st.rerun()
+    if st.button("Force Refresh", width="stretch"): st.rerun()
     if auto_refresh:
         time.sleep(5)
         st.rerun()
@@ -150,7 +150,7 @@ with tab_dashboard:
                         "Size (KB)": round(f.stat().st_size / 1024, 2)
                     })
         if watch_files:
-            st.dataframe(pd.DataFrame(watch_files), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(watch_files), width="stretch", hide_index=True)
         else:
             st.info("Queue is empty. Waiting for invoices...")
             
@@ -166,13 +166,13 @@ with tab_dashboard:
                         "Status": "Archived"
                     })
         if processed_files:
-            st.dataframe(pd.DataFrame(processed_files), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(processed_files), width="stretch", hide_index=True)
             
     with col_upload:
         st.subheader("Manual Ingest")
         uploaded = st.file_uploader("Upload Invoices", type=["pdf", "png", "jpg", "json"], accept_multiple_files=True)
         
-        if uploaded and st.button(f"Process {len(uploaded)} Files", type="primary", use_container_width=True):
+        if uploaded and st.button(f"Process {len(uploaded)} Files", type="primary", width="stretch"):
             status_bar = st.status("Initiating Upload...", expanded=True)
             for f in uploaded:
                 status_bar.write(f"Uploading {f.name}...")
@@ -244,7 +244,7 @@ with tab_audit:
             
             with r_col5:
                 btn_col1, btn_col2 = st.columns(2)
-                if btn_col1.button("Approve", key=f"app_{fname}", type="primary", use_container_width=True):
+                if btn_col1.button("Approve", key=f"app_{fname}", type="primary", width="stretch"):
                      try:
                         resp = requests.post(f"{API_URL}/v1/approve", json={
                             "file_name": fname,
@@ -260,7 +260,7 @@ with tab_audit:
                      except Exception as e:
                         st.error(str(e))
 
-                if btn_col2.button("Reject", key=f"rej_{fname}", type="secondary", use_container_width=True):
+                if btn_col2.button("Reject", key=f"rej_{fname}", type="secondary", width="stretch"):
                     try:
                         resp = requests.post(f"{API_URL}/v1/reject", json={
                             "file_name": fname,
@@ -330,7 +330,7 @@ with tab_audit:
                         df = pd.DataFrame(items)
                         cols = ["description", "item_code", "qty", "unit_price", "total", "currency"]
                         existing_cols = [c for c in cols if c in df.columns]
-                        st.dataframe(df[existing_cols] if existing_cols else df, use_container_width=True, hide_index=True)
+                        st.dataframe(df[existing_cols] if existing_cols else df, width="stretch", hide_index=True)
                     else:
                         st.info("No line items extracted.")
                         
@@ -382,7 +382,7 @@ with tab_audit:
                             display_pdf(str(generated_pdf))
                         with c_pdf_down:
                             with open(generated_pdf, "rb") as f:
-                                st.download_button("Download Report", f, file_name=generated_pdf.name, mime="application/pdf", use_container_width=True)
+                                st.download_button("Download Report", f, file_name=generated_pdf.name, mime="application/pdf", width="stretch")
                     else:
                         st.warning("No generated PDF report found.")
                 
